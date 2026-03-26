@@ -31,6 +31,10 @@ interface PluginConfig {
  * its config from `api.pluginConfig`, creates an Edictum guard from the
  * contract bundle, and delegates to `createEdictumPlugin` which wires up
  * the before_tool_call / after_tool_call hooks.
+ *
+ * When `serverUrl` and `apiKey` are configured, the plugin connects to
+ * Edictum Console for hot-reload contracts and fleet monitoring instead
+ * of loading local YAML.
  */
 export default {
   id: 'edictum',
@@ -39,7 +43,7 @@ export default {
     'Runtime contract enforcement for AI agent tool calls. Denies exfiltration, credential theft, destructive commands, and prompt injection.',
   version: '0.1.0',
 
-  register(api: {
+  async register(api: {
     readonly pluginConfig?: Record<string, unknown>
     on(hookName: string, handler: (...args: unknown[]) => unknown, opts?: { priority?: number }): void
   }) {
@@ -48,10 +52,39 @@ export default {
     // Honor explicit disable
     if (config.enabled === false) return
 
-    const contractsPath = config.contractsPath ?? DEFAULT_CONTRACTS
     const mode = config.mode ?? 'enforce'
 
-    const guard = Edictum.fromYaml(contractsPath, { mode })
+    let guard: Edictum
+
+    if (config.serverUrl && config.apiKey) {
+      // Connect to Edictum Console for hot-reload contracts + fleet monitoring.
+      // Dynamic import so @edictum/server is only loaded when needed (optional dep).
+      try {
+        const serverModule = await import('@edictum/server')
+        if (!('createServerGuard' in serverModule)) {
+          throw new Error('createServerGuard not found — update @edictum/server to >=0.2.0')
+        }
+        const { guard: serverGuard } = await (serverModule as any).createServerGuard({
+          url: config.serverUrl,
+          apiKey: config.apiKey,
+          agentId: config.agentId ?? 'openclaw',
+          mode,
+        })
+        guard = serverGuard
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        if (message.includes('Cannot find module') || message.includes('MODULE_NOT_FOUND')) {
+          throw new Error(
+            'Edictum Console mode requires @edictum/server. Install it with: pnpm add @edictum/server',
+          )
+        }
+        throw err
+      }
+    } else {
+      // Local contracts
+      const contractsPath = config.contractsPath ?? DEFAULT_CONTRACTS
+      guard = Edictum.fromYaml(contractsPath, { mode })
+    }
 
     // Delegate to the adapter's plugin factory — it registers hooks via api.on()
     const plugin = createEdictumPlugin(guard, {

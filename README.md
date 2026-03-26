@@ -42,9 +42,9 @@ const adapter = new EdictumOpenClawAdapter(guard, {
 
 ## What It Does
 
-Edictum enforces **contracts** — declarative YAML rules that run before and after every tool call. Unlike prompt-based guardrails, contracts cannot be talked past by the LLM.
+Edictum enforces **contracts** — declarative YAML rules evaluated before and after every tool call. Unlike prompt-based guardrails, contracts cannot be talked past by the LLM.
 
-When a tool call violates a contract, Edictum **blocks it** before execution and logs an audit event. No data leaves, no file is deleted, no credential is exposed.
+When a tool call violates a contract, Edictum **denies it** before execution and logs an audit event. No data leaves, no file is deleted, no credential is exposed.
 
 ## What's Included
 
@@ -92,9 +92,35 @@ Configure in your OpenClaw config under `plugins.entries.edictum`:
 | `apiKey` | string | — | API key for Console connection |
 | `agentId` | string | — | Agent identifier for Console fleet monitoring |
 
+### Connect to Edictum Console
+
+For hot-reload contracts, fleet monitoring, and HITL approvals, connect to a running [Edictum Console](https://github.com/edictum-ai/edictum-console) instance:
+
+```bash
+pnpm add @edictum/server
+```
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "edictum": {
+        "serverUrl": "https://console.example.com",
+        "apiKey": "edk_production_...",
+        "agentId": "my-openclaw-agent"
+      }
+    }
+  }
+}
+```
+
+When `serverUrl` and `apiKey` are configured, the plugin connects to Console instead of loading local contracts. If `@edictum/server` is not installed or the connection fails, you get a clear error message.
+
+Without server config, the plugin uses the bundled `openclaw-governance.yaml` — no network required.
+
 ### Observe Mode
 
-Start in observe mode to audit what would be blocked without interrupting your workflow:
+Start in observe mode to audit what would be denied without interrupting your workflow:
 
 ```json
 {

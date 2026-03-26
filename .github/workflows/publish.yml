@@ -24,15 +24,16 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          registry-url: https://registry.npmjs.org
+          # Do NOT set registry-url here — it injects a default token
+          # that overrides OIDC. We configure .npmrc manually below.
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
 
-      # Clear the default token injected by setup-node — it overrides OIDC
+      # Configure npm for OIDC provenance publishing
       # See: https://github.com/orgs/community/discussions/176761
       - name: Publish to npm
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ''
+        run: |
+          echo "//registry.npmjs.org/:_authToken=" > ~/.npmrc
+          npm publish --access public --provenance --registry https://registry.npmjs.org

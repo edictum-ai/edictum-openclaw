@@ -16,19 +16,23 @@ jobs:
 
       - uses: pnpm/action-setup@v4
 
-      # No registry-url — avoids injected NODE_AUTH_TOKEN that breaks OIDC
-      # See: https://github.com/JamesHenry/lerna-v9-oidc-publishing-example
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          registry-url: https://registry.npmjs.org
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # Upgrade npm for trusted publishing (OIDC) — bundled npm <11.5.1 fails with E404 for scoped packages
+      # See: https://github.com/npm/cli/issues/8678, https://github.com/hirokisakabe/pom/pull/519
+      - name: Upgrade npm for trusted publishing (OIDC)
+        run: npm install -g npm@^11.5.1
+
       - run: pnpm build
       - run: pnpm test
 
-      # Configure registry manually and publish with OIDC
       - name: Publish to npm
-        run: |
-          npm config set registry https://registry.npmjs.org/
-          npm publish --access public
+        run: npm publish --access public
+        env:
+          NPM_CONFIG_PROVENANCE: true

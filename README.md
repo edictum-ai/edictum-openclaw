@@ -150,19 +150,21 @@ Write your own contracts in YAML following the Edictum contract schema:
 ```yaml
 apiVersion: edictum/v1
 kind: ContractBundle
-
 metadata:
   name: my-custom-governance
-
+defaults:
+  mode: enforce
 contracts:
-  no-production-writes:
-    tools: [exec, write, edit]
-    preconditions:
-      - type: deny
-        when:
-          args_match:
-            pattern: "production|prod-db|live-server"
-        message: "Production writes require manual approval."
+  - id: no-production-writes
+    type: pre
+    tool: "*"
+    when:
+      any:
+        - args.path: { matches: "production|prod-db|live-server" }
+        - args.command: { matches: "production|prod-db|live-server" }
+    then:
+      effect: deny
+      message: "Production operations require manual approval."
 ```
 
 Point the plugin at your bundle:

@@ -1,4 +1,5 @@
 {
+  "packageManager": "pnpm@10.11.0",
   "name": "@edictum/openclaw",
   "version": "0.1.0",
   "description": "OpenClaw adapter and plugin for Edictum runtime contract enforcement — one command, zero code changes",

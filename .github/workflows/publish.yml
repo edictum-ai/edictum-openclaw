@@ -12,17 +12,23 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v6
+      # No registry-url — avoids injected NODE_AUTH_TOKEN that breaks OIDC
+      # See: https://github.com/JamesHenry/lerna-v9-oidc-publishing-example
+      - uses: actions/setup-node@v5
         with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: 22
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
-      - run: npm publish --access public
+
+      # Configure registry manually and publish with OIDC
+      - name: Publish to npm
+        run: |
+          npm config set registry https://registry.npmjs.org/
+          npm publish --access public

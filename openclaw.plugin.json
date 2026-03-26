@@ -1,0 +1,55 @@
+{
+  "id": "edictum",
+  "name": "Edictum Contract Enforcement",
+  "description": "Runtime contract enforcement for AI agent tool calls. Denies exfiltration, credential theft, destructive commands, and prompt injection.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "contractsPath": {
+        "type": "string"
+      },
+      "mode": {
+        "type": "string",
+        "enum": ["enforce", "observe"]
+      },
+      "serverUrl": {
+        "type": "string"
+      },
+      "apiKey": {
+        "type": "string"
+      },
+      "agentId": {
+        "type": "string"
+      }
+    }
+  },
+  "uiHints": {
+    "contractsPath": {
+      "label": "Contracts Path",
+      "help": "Path to a custom YAML contract bundle (defaults to the bundled openclaw-governance.yaml)"
+    },
+    "mode": {
+      "label": "Enforcement Mode",
+      "help": "\"enforce\" blocks violations; \"observe\" logs them without blocking"
+    },
+    "serverUrl": {
+      "label": "Console Server URL",
+      "help": "Edictum Console URL for HITL approvals and audit feeds (optional)",
+      "sensitive": false
+    },
+    "apiKey": {
+      "label": "Console API Key",
+      "help": "API key for connecting to Edictum Console (optional)",
+      "sensitive": true
+    },
+    "agentId": {
+      "label": "Agent ID",
+      "help": "Stable agent identifier for Console fleet monitoring (optional)"
+    }
+  }
+}

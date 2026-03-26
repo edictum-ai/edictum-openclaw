@@ -1,7 +1,7 @@
 {
-  "name": "@edictum/openclaw-plugin",
+  "name": "@edictum/openclaw",
   "version": "0.1.0",
-  "description": "OpenClaw plugin for Edictum runtime contract enforcement — one command, zero code changes",
+  "description": "OpenClaw adapter and plugin for Edictum runtime contract enforcement — one command, zero code changes",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -9,8 +9,13 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
+      "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./plugin": {
+      "types": "./dist/native-plugin.d.ts",
+      "import": "./dist/native-plugin.js",
+      "require": "./dist/native-plugin.cjs"
     }
   },
   "files": [
@@ -24,6 +29,7 @@
     "edictum",
     "openclaw",
     "plugin",
+    "adapter",
     "security",
     "contracts",
     "governance",
@@ -34,8 +40,7 @@
     "url": "git+https://github.com/edictum-ai/edictum-openclaw.git"
   },
   "dependencies": {
-    "@edictum/core": "^0.1.0",
-    "@edictum/openclaw": "^0.1.0"
+    "@edictum/core": "^0.1.0"
   },
   "peerDependencies": {
     "openclaw": ">=2026.1.0"

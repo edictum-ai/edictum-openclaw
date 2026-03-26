@@ -11,9 +11,6 @@ importers:
       '@edictum/core':
         specifier: ^0.1.0
         version: 0.1.0
-      '@edictum/openclaw':
-        specifier: link:/Users/acartagena/project/edictum-ts/packages/openclaw
-        version: link:../edictum-ts/packages/openclaw
       openclaw:
         specifier: '>=2026.1.0'
         version: 2026.3.24(@napi-rs/canvas@0.1.97)

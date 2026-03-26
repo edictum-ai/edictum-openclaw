@@ -6,8 +6,38 @@ Runtime contract enforcement for OpenClaw AI agent tool calls. Install the plugi
 
 ## Install
 
+### Path 1: One command (recommended)
+
 ```bash
-openclaw plugins install @edictum/openclaw-plugin
+openclaw plugins install @edictum/openclaw
+```
+
+Done. All 25 contracts active. No code changes.
+
+### Path 2: Manual wiring (advanced)
+
+```bash
+pnpm add @edictum/core @edictum/openclaw
+```
+
+```typescript
+import { Edictum } from '@edictum/core'
+import { createEdictumPlugin } from '@edictum/openclaw'
+
+const guard = Edictum.fromYaml('contracts/openclaw-governance.yaml')
+const plugin = createEdictumPlugin(guard)
+```
+
+Or use the adapter directly for full control:
+
+```typescript
+import { Edictum } from '@edictum/core'
+import { EdictumOpenClawAdapter } from '@edictum/openclaw'
+
+const guard = Edictum.fromYaml('contracts/openclaw-governance.yaml')
+const adapter = new EdictumOpenClawAdapter(guard, {
+  onDeny: (envelope, reason) => console.error(`[edictum] denied: ${reason}`),
+})
 ```
 
 ## What It Does
@@ -122,6 +152,29 @@ Point the plugin at your bundle:
   }
 }
 ```
+
+## API Reference
+
+### Plugin install (default)
+
+The default export is the native OpenClaw plugin definition. Used automatically by `openclaw plugins install`.
+
+### `createEdictumPlugin(guard, options?)`
+
+Factory that creates a plugin definition from an `Edictum` guard instance. Returns `{ id, name, description, register(api) }`.
+
+### `EdictumOpenClawAdapter`
+
+Low-level adapter class. Methods:
+- `pre(toolName, toolInput, callId, ctx)` — evaluate preconditions (returns denial reason or null)
+- `post(callId, toolResponse, afterEvent)` — evaluate postconditions
+- `handleBeforeToolCall(event, ctx)` — OpenClaw hook handler
+- `handleAfterToolCall(event, ctx)` — OpenClaw hook handler
+- `setPrincipal(principal)` — update principal at runtime
+
+### `defaultPrincipalFromContext(ctx)`
+
+Maps OpenClaw `ToolHookContext` to an Edictum `Principal`.
 
 ## Links
 

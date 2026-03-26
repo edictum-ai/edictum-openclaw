@@ -24,15 +24,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Upgrade npm for trusted publishing (OIDC) — bundled npm <11.5.1 fails with E404 for scoped packages
-      # See: https://github.com/npm/cli/issues/8678, https://github.com/hirokisakabe/pom/pull/519
-      - name: Upgrade npm for trusted publishing (OIDC)
-        run: npm install -g npm@^11.5.1
+      # Trusted publishing requires npm >=11.5.1
+      - run: npm install -g npm@latest
 
       - run: pnpm build
       - run: pnpm test
 
-      - name: Publish to npm
-        run: npm publish --access public
-        env:
-          NPM_CONFIG_PROVENANCE: true
+      # publishConfig in package.json sets provenance + registry
+      - run: npm publish --provenance --access public

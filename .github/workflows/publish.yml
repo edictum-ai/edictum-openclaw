@@ -30,7 +30,8 @@ jobs:
       - run: pnpm build
       - run: pnpm test
 
+      # Clear the default token injected by setup-node — it overrides OIDC
       - name: Publish to npm
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          unset NODE_AUTH_TOKEN
+          npm publish --access public --provenance

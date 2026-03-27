@@ -39,6 +39,30 @@ import { buildFindings, summarizeResult } from './helpers.js'
  */
 const MAX_PENDING = 10_000
 
+// ---------------------------------------------------------------------------
+// OpenClaw parameter alias normalization
+// ---------------------------------------------------------------------------
+// OpenClaw accepts multiple parameter names for the same semantic argument.
+// For example, the file path in read/write/edit tools can be sent as:
+//   path, file_path, filePath, file
+// (See CLAUDE_PARAM_GROUPS in openclaw/dist/plugin-sdk/src/agents/pi-tools.params.d.ts)
+//
+// Contracts only check args.path (the canonical name). Without normalization,
+// a tool call using args.file bypasses every path-based contract — a complete
+// governance bypass for read-protection, credential guards, etc.
+//
+// This map defines { canonical: aliases[] }. The adapter copies the first
+// matching alias to the canonical key before creating the envelope. The
+// original alias key is preserved for audit trail transparency.
+
+/** Aliases → canonical parameter name. Applied before envelope creation. */
+const PARAM_ALIAS_MAP: ReadonlyArray<{
+  readonly canonical: string
+  readonly aliases: readonly string[]
+}> = [
+  { canonical: 'path', aliases: ['file_path', 'filePath', 'file'] },
+]
+
 /** Control character regex — reused for both sessionId and callId validation. */
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/
 
@@ -480,9 +504,13 @@ export class EdictumOpenClawAdapter {
   ): Promise<BeforeToolCallResult | undefined> {
     const callId = event.toolCallId ?? ctx.toolCallId ?? `ec_${Date.now()}_${this._callIndex}`
 
+    // Normalize OpenClaw parameter aliases so contracts see canonical names.
+    // E.g., args.file → args.path. The original key is kept for audit logs.
+    const params = EdictumOpenClawAdapter._normalizeParams(event.params)
+
     let reason: string | null
     try {
-      reason = await this.pre(event.toolName, event.params, callId, ctx)
+      reason = await this.pre(event.toolName, params, callId, ctx)
     } catch {
       // Any unhandled error in pre() must deny, not propagate.
       // Propagating to OpenClaw risks fail-open if the plugin host
@@ -537,6 +565,30 @@ export class EdictumOpenClawAdapter {
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Normalize OpenClaw parameter aliases to canonical names.
+   *
+   * Returns a shallow copy with canonical keys populated from aliases.
+   * Original alias keys are preserved for audit trail transparency.
+   * If the canonical key already exists, aliases are not consulted.
+   */
+  private static _normalizeParams(
+    params: Record<string, unknown>,
+  ): Record<string, unknown> {
+    let copy: Record<string, unknown> | null = null
+    for (const { canonical, aliases } of PARAM_ALIAS_MAP) {
+      if (canonical in params) continue
+      for (const alias of aliases) {
+        if (alias in params) {
+          if (!copy) copy = { ...params }
+          copy[canonical] = copy[alias]
+          break // first match wins — aliases are in priority order
+        }
+      }
+    }
+    return copy ?? params // no-copy fast path when no normalization needed
+  }
 
   /**
    * Resolve the principal for a call. If the resolver throws, returns an

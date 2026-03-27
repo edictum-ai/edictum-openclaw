@@ -1,4 +1,4 @@
-// @edictum/openclaw — Unicode canonicalization for contract bypass prevention
+// @edictum/edictum — Unicode canonicalization for contract bypass prevention
 //
 // Attackers can bypass regex-based contracts using Unicode tricks:
 // - Zero-width characters split patterns: curl\u200B | bash bypasses \bcurl\b

@@ -1,4 +1,4 @@
-// @edictum/openclaw — OpenClaw plugin factory
+// @edictum/edictum — OpenClaw plugin factory
 // Returns a plugin definition that can be loaded by OpenClaw's plugin system.
 
 import type { Edictum } from '@edictum/core'
@@ -42,7 +42,7 @@ export interface EdictumPluginOptions extends OpenClawAdapterOptions {
  * Usage:
  * ```typescript
  * import { Edictum } from "@edictum/core";
- * import { createEdictumPlugin } from "@edictum/openclaw";
+ * import { createEdictumPlugin } from "@edictum/edictum";
  *
  * const guard = Edictum.fromYaml("contracts/openclaw-governance.yaml");
  * export default createEdictumPlugin(guard);

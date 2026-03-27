@@ -1,4 +1,4 @@
-// @edictum/openclaw — OpenClaw adapter + plugin for Edictum contract enforcement
+// @edictum/edictum — OpenClaw adapter + plugin for Edictum contract enforcement
 // Single package: use as an OpenClaw plugin (default export) or wire manually.
 
 export const VERSION = '0.1.0' as const

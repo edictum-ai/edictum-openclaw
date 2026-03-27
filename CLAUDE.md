@@ -2,8 +2,8 @@
 
 Native OpenClaw plugin + adapter for Edictum runtime contract enforcement.
 
-**npm:** `@edictum/openclaw`
-**Install:** `openclaw plugins install @edictum/openclaw`
+**npm:** `@edictum/edictum`
+**Install:** `openclaw plugins install @edictum/edictum`
 
 ## What This Is
 
@@ -28,8 +28,8 @@ Two modes:
 
 ## Dependencies
 
-- `@edictum/core` — contract engine (required)
-- `@edictum/server` — Console connection (optional, loaded dynamically)
+- `@edictum/core` — contract engine (bundled at build time)
+- `@edictum/server` — Console connection (optional, separate install)
 - `openclaw` — peer dependency (the host runtime)
 
 ## Commands

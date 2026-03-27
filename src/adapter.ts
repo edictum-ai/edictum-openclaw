@@ -1,4 +1,4 @@
-// @edictum/openclaw — OpenClaw adapter for edictum
+// @edictum/edictum — OpenClaw adapter for edictum
 // Translates between OpenClaw plugin hooks and Edictum's GovernancePipeline.
 // NOTE: 500+ lines — approved due to adapter pattern requiring single-class cohesion (matches vercel-ai/claude-sdk)
 

@@ -1,4 +1,4 @@
-// @edictum/openclaw — helper functions extracted from adapter.ts
+// @edictum/edictum — helper functions extracted from adapter.ts
 
 import type { Finding } from './types.js'
 

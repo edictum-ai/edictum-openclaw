@@ -14,9 +14,9 @@ mitigation within 7 days for critical issues.
 
 This policy covers:
 
-- The `@edictum/openclaw-plugin` npm package
+- The `@edictum/edictum` npm package (previously `@edictum/openclaw`)
 - The bundled contract governance bundle (`contracts/openclaw-governance.yaml`)
 - The plugin manifest and configuration schema
 
 For vulnerabilities in the core Edictum library (`@edictum/core`) or the
-OpenClaw adapter (`@edictum/openclaw`), please report to the same address.
+OpenClaw adapter (`@edictum/edictum`), please report to the same address.

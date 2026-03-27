@@ -1,4 +1,4 @@
-// @edictum/openclaw — OpenClaw type definitions
+// @edictum/edictum — OpenClaw type definitions
 // These mirror OpenClaw's plugin types so we don't need a runtime import.
 // OpenClaw remains a peerDependency for type checking only.
 

@@ -4,12 +4,15 @@
 
 Runtime contract enforcement for OpenClaw AI agent tool calls. Install the plugin and every tool call is governed by a 770-line security contract bundle — blocking exfiltration, credential theft, destructive commands, prompt injection, and more.
 
+> Previously published as `@edictum/openclaw` — that package is deprecated. Use `@edictum/edictum` instead.
+
 ## Install
 
 ### Path 1: One command (recommended)
 
 ```bash
-openclaw plugins install @edictum/openclaw
+openclaw plugins install @edictum/edictum
+openclaw config set plugins.allow '["edictum"]'
 ```
 
 Done. All 25 contracts active. No code changes.
@@ -17,12 +20,12 @@ Done. All 25 contracts active. No code changes.
 ### Path 2: Manual wiring (advanced)
 
 ```bash
-pnpm add @edictum/core @edictum/openclaw
+pnpm add @edictum/core @edictum/edictum
 ```
 
 ```typescript
 import { Edictum } from '@edictum/core'
-import { createEdictumPlugin } from '@edictum/openclaw'
+import { createEdictumPlugin } from '@edictum/edictum'
 
 const guard = Edictum.fromYaml('contracts/openclaw-governance.yaml')
 const plugin = createEdictumPlugin(guard)
@@ -32,7 +35,7 @@ Or use the adapter directly for full control:
 
 ```typescript
 import { Edictum } from '@edictum/core'
-import { EdictumOpenClawAdapter } from '@edictum/openclaw'
+import { EdictumOpenClawAdapter } from '@edictum/edictum'
 
 const guard = Edictum.fromYaml('contracts/openclaw-governance.yaml')
 const adapter = new EdictumOpenClawAdapter(guard, {
@@ -94,10 +97,12 @@ Configure in your OpenClaw config under `plugins.entries.edictum`:
 
 ### Connect to Edictum Console
 
-For hot-reload contracts, fleet monitoring, and HITL approvals, connect to a running [Edictum Console](https://github.com/edictum-ai/edictum-console) instance:
+For hot-reload contracts, fleet monitoring, and HITL approvals, connect to a running [Edictum Console](https://github.com/edictum-ai/edictum-console) instance.
+
+Install `@edictum/server` in the OpenClaw extensions directory:
 
 ```bash
-pnpm add @edictum/server
+cd ~/.openclaw/extensions/edictum && npm install @edictum/server
 ```
 
 ```json

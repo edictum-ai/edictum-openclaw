@@ -1,4 +1,4 @@
-// @edictum/openclaw — native OpenClaw plugin entry point
+// @edictum/edictum — native OpenClaw plugin entry point
 // Wraps createEdictumPlugin with config-driven setup for `openclaw plugins install`.
 
 import { Edictum } from '@edictum/core'
@@ -49,7 +49,7 @@ async function initServerAdapter(
     const message = err instanceof Error ? err.message : String(err)
     if (message.includes('Cannot find module') || message.includes('MODULE_NOT_FOUND')) {
       throw new Error(
-        'Edictum Console mode requires @edictum/server. Install it with: pnpm add @edictum/server',
+        'Edictum Console mode requires @edictum/server. Install it with: npm install @edictum/server',
       )
     }
     throw err

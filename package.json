@@ -51,7 +51,7 @@
     ]
   },
   "dependencies": {
-    "@edictum/core": "^0.1.0"
+    "@edictum/core": "^0.2.0"
   },
   "optionalDependencies": {
     "@edictum/server": "^0.1.0"

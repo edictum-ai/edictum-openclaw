@@ -9,6 +9,6 @@ export default defineConfig({
   sourcemap: true,
   outDir: 'dist',
   target: 'node22',
-  // openclaw is a peer dep — don't bundle it
-  external: ['openclaw'],
+  // Don't bundle dependencies — they resolve from node_modules at runtime.
+  external: ['openclaw', '@edictum/core', '@edictum/server'],
 })

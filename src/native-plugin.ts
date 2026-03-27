@@ -48,9 +48,22 @@ type DefinePluginEntryFn = (opts: {
 let defineEntry: DefinePluginEntryFn | undefined
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  defineEntry = require('openclaw/plugin-sdk/plugin-entry').definePluginEntry
-} catch {
-  /* older OpenClaw without SDK — fall back to raw object export */
+  const mod = require('openclaw/plugin-sdk/plugin-entry')
+  if (mod && typeof mod.definePluginEntry === 'function') {
+    defineEntry = mod.definePluginEntry
+  }
+} catch (err) {
+  // Only swallow module-not-found — rethrow unexpected errors.
+  // In bundled ESM, esbuild's __require shim throws "Dynamic require of X is not supported"
+  // which is functionally equivalent to module-not-found.
+  const msg = err instanceof Error ? err.message : ''
+  if (
+    !msg.includes('Cannot find module') &&
+    !msg.includes('MODULE_NOT_FOUND') &&
+    !msg.includes('Dynamic require')
+  ) {
+    throw err
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +134,70 @@ const configSchema = {
 }
 
 // ---------------------------------------------------------------------------
+// Shared hook registration — eliminates duplication between code paths
+// ---------------------------------------------------------------------------
+
+function registerServerHooks(
+  api: any,
+  config: PluginConfig,
+  mode: 'enforce' | 'observe',
+  log?: PluginLogger,
+  onReady?: (adapter: EdictumOpenClawAdapter) => void,
+) {
+  let adapterPromise: Promise<EdictumOpenClawAdapter> | null = null
+
+  const getAdapter = (): Promise<EdictumOpenClawAdapter> => {
+    if (!adapterPromise) {
+      adapterPromise = initServerAdapter(config, mode, log).then((adapter) => {
+        onReady?.(adapter)
+        return adapter
+      })
+    }
+    return adapterPromise
+  }
+
+  api.on(
+    'before_tool_call',
+    async (event: unknown, ctx: unknown) => {
+      const adapter = await getAdapter()
+      return adapter.handleBeforeToolCall(
+        event as BeforeToolCallEvent,
+        ctx as ToolHookContext,
+      )
+    },
+    { priority: HOOK_PRIORITY },
+  )
+
+  api.on(
+    'after_tool_call',
+    async (event: unknown, ctx: unknown) => {
+      const adapter = await getAdapter()
+      await adapter.handleAfterToolCall(
+        event as AfterToolCallEvent,
+        ctx as ToolHookContext,
+      )
+    },
+    { priority: HOOK_PRIORITY },
+  )
+}
+
+function registerLocalHooks(
+  api: any,
+  config: PluginConfig,
+  mode: 'enforce' | 'observe',
+  log?: PluginLogger,
+): Edictum {
+  const contractsPath = config.contractsPath ?? DEFAULT_CONTRACTS
+  const guard = Edictum.fromYaml(contractsPath, { mode })
+
+  const plugin = createEdictumPlugin(guard, { priority: HOOK_PRIORITY })
+  plugin.register(api as Parameters<typeof plugin.register>[0])
+
+  log?.info(`loaded ${contractsPath} in ${mode} mode`)
+  return guard
+}
+
+// ---------------------------------------------------------------------------
 // Register function — shared between SDK and raw export paths
 // ---------------------------------------------------------------------------
 
@@ -136,25 +213,17 @@ function registerPlugin(api: any) {
 
   const mode = config.mode ?? 'enforce'
 
-  // ── CLI commands ──────────────────────────────────────────────────
+  // Track the active guard for the status command
+  let activeGuard: Edictum | null = null
+
+  // ── CLI command (if SDK supports it) ────────────────────────────
   if (typeof api.registerCommand === 'function') {
-    // Track the guard/adapter for status and audit commands
-    let activeGuard: Edictum | null = null
-    let activeAdapter: EdictumOpenClawAdapter | null = null
-
-    // Capture references after guard creation (below)
-    const setActive = (guard: Edictum, adapter?: EdictumOpenClawAdapter) => {
-      activeGuard = guard
-      if (adapter) activeAdapter = adapter
-    }
-
     api.registerCommand({
       name: 'edictum',
       description: 'Show Edictum governance status',
-      acceptsArgs: true,
       handler: () => {
         if (!activeGuard) {
-          return { text: '⚠️ Edictum guard not initialized yet.' }
+          return { text: 'Edictum guard not initialized yet.' }
         }
         const lines = [
           `**Edictum Governance Status**`,
@@ -169,98 +238,16 @@ function registerPlugin(api: any) {
         return { text: lines.join('\n') }
       },
     })
+  }
 
-    // Wire up guard capture in both code paths below
-    if (config.serverUrl && config.apiKey) {
-      let adapterPromise: Promise<EdictumOpenClawAdapter> | null = null
-
-      const getAdapter = (): Promise<EdictumOpenClawAdapter> => {
-        if (!adapterPromise) {
-          adapterPromise = initServerAdapter(config, mode, log).then((adapter) => {
-            setActive((adapter as any)._guard ?? activeGuard!, adapter)
-            return adapter
-          })
-        }
-        return adapterPromise
-      }
-
-      api.on(
-        'before_tool_call',
-        async (event: unknown, ctx: unknown) => {
-          const adapter = await getAdapter()
-          return adapter.handleBeforeToolCall(
-            event as BeforeToolCallEvent,
-            ctx as ToolHookContext,
-          )
-        },
-        { priority: HOOK_PRIORITY },
-      )
-
-      api.on(
-        'after_tool_call',
-        async (event: unknown, ctx: unknown) => {
-          const adapter = await getAdapter()
-          await adapter.handleAfterToolCall(
-            event as AfterToolCallEvent,
-            ctx as ToolHookContext,
-          )
-        },
-        { priority: HOOK_PRIORITY },
-      )
-    } else {
-      const contractsPath = config.contractsPath ?? DEFAULT_CONTRACTS
-      const guard = Edictum.fromYaml(contractsPath, { mode })
-      setActive(guard)
-
-      const plugin = createEdictumPlugin(guard, { priority: HOOK_PRIORITY })
-      plugin.register(api as Parameters<typeof plugin.register>[0])
-
-      log?.info(`loaded ${contractsPath} in ${mode} mode`)
-    }
+  // ── Hook registration ───────────────────────────────────────────
+  if (config.serverUrl && config.apiKey) {
+    registerServerHooks(api, config, mode, log, (adapter) => {
+      // EdictumOpenClawAdapter exposes the guard via a getter
+      activeGuard = (adapter as any)._guard ?? null
+    })
   } else {
-    // ── No registerCommand — older OpenClaw or minimal API ──────────
-    if (config.serverUrl && config.apiKey) {
-      let adapterPromise: Promise<EdictumOpenClawAdapter> | null = null
-
-      const getAdapter = (): Promise<EdictumOpenClawAdapter> => {
-        if (!adapterPromise) {
-          adapterPromise = initServerAdapter(config, mode, log)
-        }
-        return adapterPromise
-      }
-
-      api.on(
-        'before_tool_call',
-        async (event: unknown, ctx: unknown) => {
-          const adapter = await getAdapter()
-          return adapter.handleBeforeToolCall(
-            event as BeforeToolCallEvent,
-            ctx as ToolHookContext,
-          )
-        },
-        { priority: HOOK_PRIORITY },
-      )
-
-      api.on(
-        'after_tool_call',
-        async (event: unknown, ctx: unknown) => {
-          const adapter = await getAdapter()
-          await adapter.handleAfterToolCall(
-            event as AfterToolCallEvent,
-            ctx as ToolHookContext,
-          )
-        },
-        { priority: HOOK_PRIORITY },
-      )
-    } else {
-      const contractsPath = config.contractsPath ?? DEFAULT_CONTRACTS
-      const guard = Edictum.fromYaml(contractsPath, { mode })
-
-      const plugin = createEdictumPlugin(guard, { priority: HOOK_PRIORITY })
-      plugin.register(api as Parameters<typeof plugin.register>[0])
-
-      log?.info(`loaded ${contractsPath} in ${mode} mode`)
-    }
+    activeGuard = registerLocalHooks(api, config, mode, log)
   }
 }
 

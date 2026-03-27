@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       openclaw:
-        specifier: '>=2026.1.0'
+        specifier: '>=2026.3.0'
         version: 2026.3.24(@napi-rs/canvas@0.1.97)
     devDependencies:
       '@edictum/core':

@@ -1,0 +1,7 @@
+# Governance and CI files require maintainer approval.
+# Prevents self-referential workflow bypass: a PR cannot modify
+# review.yml to emit a fake passing review without maintainer sign-off.
+.github/workflows/review.yml @edictum-ai/maintainers
+.github/review-instructions.md @edictum-ai/maintainers
+.github/review-template.md @edictum-ai/maintainers
+CLAUDE.md @edictum-ai/maintainers

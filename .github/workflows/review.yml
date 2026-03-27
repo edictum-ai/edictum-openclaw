@@ -144,8 +144,8 @@ jobs:
         if: steps.validate.outputs.valid == 'true'
         run: |
           # Fail-closed: any STATUS that isn't explicitly "pass" blocks the merge.
-          # Handles case variants, trailing spaces, and missing markers.
-          STATUS=$(grep -o '<!-- STATUS: [a-z]* -->' /tmp/review.md | head -1 | grep -o '[a-z]*' | tail -1)
+          # Anchored to line 2 — prevents prompt injection prepending a fake pass marker.
+          STATUS=$(sed -n '2p' /tmp/review.md | grep -o '<!-- STATUS: [a-z]* -->' | grep -o '[a-z]*' | tail -1)
           if [ "$STATUS" != "pass" ]; then
             echo "::error::Review status is '${STATUS}' — blocking merge. See PR comment for details."
             exit 1
@@ -186,15 +186,16 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          EXISTING_ID=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+          EXISTING_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
             --jq '[.[] | select(.body | contains("<!-- edictum-review -->"))] | last | .id // empty')
           if [ -n "$EXISTING_ID" ]; then
-            gh api "repos/${{ github.repository }}/issues/comments/${EXISTING_ID}" \
+            gh api "repos/${REPO}/issues/comments/${EXISTING_ID}" \
               -X PATCH -F body=@/tmp/review.md
             echo "Updated existing review comment ${EXISTING_ID}"
           else
-            gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
               -F body=@/tmp/review.md
             echo "Created new review comment"
           fi
@@ -204,6 +205,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           if [ -f /tmp/review-payload.json ]; then
             TYPE=$(jq -r 'type' /tmp/review-payload.json)
@@ -217,7 +220,7 @@ jobs:
               echo "::error::review-payload.json event='${EVENT}', expected 'COMMENT' — rejecting (possible prompt injection)"
               exit 1
             fi
-            gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
+            gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
               --input /tmp/review-payload.json \
               && echo "Posted inline review comments" \
               || echo "::warning::Inline comments failed (line not in diff?). Summary comment still posted."

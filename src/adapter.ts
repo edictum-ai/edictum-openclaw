@@ -571,16 +571,22 @@ export class EdictumOpenClawAdapter {
    *
    * Returns a shallow copy with canonical keys populated from aliases.
    * Original alias keys are preserved for audit trail transparency.
-   * If the canonical key already exists, aliases are not consulted.
+   *
+   * The canonical key is only considered "present" if it exists AND is
+   * non-nullish. This prevents a bypass where an adversarial input sends
+   * { path: null, file: "/etc/shadow" } — the null path would satisfy
+   * `canonical in params` but fail every contract match, while the real
+   * path in `file` goes unchecked.
    */
-  private static _normalizeParams(
-    params: Record<string, unknown>,
+  static _normalizeParams(
+    params: Record<string, unknown> | null | undefined,
   ): Record<string, unknown> {
+    if (!params || typeof params !== 'object') return {}
     let copy: Record<string, unknown> | null = null
     for (const { canonical, aliases } of PARAM_ALIAS_MAP) {
-      if (canonical in params) continue
+      if (canonical in params && params[canonical] != null) continue
       for (const alias of aliases) {
-        if (alias in params) {
+        if (alias in params && params[alias] != null) {
           if (!copy) copy = { ...params }
           copy[canonical] = copy[alias]
           break // first match wins — aliases are in priority order

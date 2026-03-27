@@ -1219,4 +1219,71 @@ describe('EdictumOpenClawAdapter', () => {
       expect(failed).toBeDefined()
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // _normalizeParams — OpenClaw path alias normalization
+  // ---------------------------------------------------------------------------
+
+  describe('_normalizeParams', () => {
+    const normalize = EdictumOpenClawAdapter._normalizeParams
+
+    it('returns params unchanged when canonical key is present', () => {
+      const params = { path: '/etc/passwd', content: 'x' }
+      expect(normalize(params)).toBe(params) // same reference — no copy
+    })
+
+    it('copies args.file to args.path', () => {
+      const result = normalize({ file: '/etc/shadow' })
+      expect(result.path).toBe('/etc/shadow')
+      expect(result.file).toBe('/etc/shadow') // original preserved
+    })
+
+    it('copies args.file_path to args.path', () => {
+      const result = normalize({ file_path: '/etc/shadow' })
+      expect(result.path).toBe('/etc/shadow')
+    })
+
+    it('copies args.filePath to args.path', () => {
+      const result = normalize({ filePath: '/etc/shadow' })
+      expect(result.path).toBe('/etc/shadow')
+    })
+
+    it('prefers file_path over filePath over file (priority order)', () => {
+      const result = normalize({ file: 'c', filePath: 'b', file_path: 'a' })
+      expect(result.path).toBe('a')
+    })
+
+    it('does not overwrite existing non-null path', () => {
+      const result = normalize({ path: '/legit', file: '/evil' })
+      expect(result.path).toBe('/legit')
+    })
+
+    it('normalizes when path is null (adversarial bypass)', () => {
+      const result = normalize({ path: null, file: '/etc/shadow' })
+      expect(result.path).toBe('/etc/shadow')
+    })
+
+    it('normalizes when path is undefined (adversarial bypass)', () => {
+      const result = normalize({ path: undefined, file: '/etc/shadow' })
+      expect(result.path).toBe('/etc/shadow')
+    })
+
+    it('skips null alias values', () => {
+      const result = normalize({ file: null, file_path: null, filePath: '/real' })
+      expect(result.path).toBe('/real')
+    })
+
+    it('returns empty object for null params', () => {
+      expect(normalize(null)).toEqual({})
+    })
+
+    it('returns empty object for undefined params', () => {
+      expect(normalize(undefined)).toEqual({})
+    })
+
+    it('returns params unchanged when no aliases present', () => {
+      const params = { command: 'ls', content: 'x' }
+      expect(normalize(params)).toBe(params) // same reference
+    })
+  })
 })

@@ -43,23 +43,13 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Set up Node
-        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22'
-          cache: 'pnpm'
-
-      - name: Install review tools
-        run: pnpm install --frozen-lockfile
-
       - name: Run code review
         id: review
         uses: anthropics/claude-code-action@9469d113c6afd29550c402740f22d1a97dd1209b # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app-token.outputs.token }}
-          claude_args: '--model claude-sonnet-4-6 --max-turns 30 --allowedTools "Bash(git diff:*),Bash(git log:*),Read,Glob,Grep,Write"'
+          claude_args: '--model claude-sonnet-4-6 --max-turns 30 --allowedTools "Bash(git diff origin/main...HEAD*),Bash(git log origin/main...HEAD*),Read,Glob,Grep,Write"'
           prompt: |
             You are an adversarial code reviewer for @edictum/openclaw — a **security plugin** for OpenClaw that enforces runtime contracts on AI agent tool calls. A single governance bypass destroys the product.
 
@@ -153,12 +143,11 @@ jobs:
       - name: Fail on findings
         if: steps.validate.outputs.valid == 'true'
         run: |
-          if grep -q '<!-- STATUS: fail -->' /tmp/review.md; then
-            echo "::error::Code review found critical issues. See PR comment for details."
-            exit 1
-          fi
-          if grep -q '<!-- STATUS: warn -->' /tmp/review.md; then
-            echo "::error::Code review found warnings that must be addressed. See PR comment for details."
+          # Fail-closed: any STATUS that isn't explicitly "pass" blocks the merge.
+          # Handles case variants, trailing spaces, and missing markers.
+          STATUS=$(grep -o '<!-- STATUS: [a-z]* -->' /tmp/review.md | head -1 | grep -o '[a-z]*' | tail -1)
+          if [ "$STATUS" != "pass" ]; then
+            echo "::error::Review status is '${STATUS}' — blocking merge. See PR comment for details."
             exit 1
           fi
           echo "Code review passed."

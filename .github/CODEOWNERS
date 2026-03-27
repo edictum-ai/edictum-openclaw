@@ -1,0 +1,10 @@
+# Governance and CI files require maintainer approval.
+# Prevents self-referential workflow bypass: a PR cannot modify
+# review.yml to emit a fake passing review without maintainer sign-off.
+# CODEOWNERS itself is protected to prevent a two-step bypass
+# (remove protection in PR #A, then modify review.yml in PR #B).
+.github/CODEOWNERS @edictum-ai/maintainers
+.github/workflows/review.yml @edictum-ai/maintainers
+.github/review-instructions.md @edictum-ai/maintainers
+.github/review-template.md @edictum-ai/maintainers
+CLAUDE.md @edictum-ai/maintainers

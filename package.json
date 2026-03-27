@@ -23,6 +23,7 @@
     "dist/",
     "contracts/",
     "openclaw.plugin.json",
+    "index.ts",
     "README.md",
     "LICENSE"
   ],
@@ -47,19 +48,15 @@
   },
   "openclaw": {
     "extensions": [
-      "./dist/native-plugin.js"
+      "./index.ts"
     ]
-  },
-  "dependencies": {
-    "@edictum/core": "^0.2.0"
-  },
-  "optionalDependencies": {
-    "@edictum/server": "^0.1.0"
   },
   "peerDependencies": {
     "openclaw": ">=2026.1.0"
   },
   "devDependencies": {
+    "@edictum/core": "^0.2.0",
+    "@edictum/server": "^0.1.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",

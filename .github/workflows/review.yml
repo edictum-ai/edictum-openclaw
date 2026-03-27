@@ -28,6 +28,11 @@ jobs:
           fetch-depth: 0
 
       - name: Extract governance files from base branch
+        # NOTE: On the first merge that introduces these files, the base branch
+        # won't have them yet. Claude will receive empty governance context and
+        # produce malformed output, causing the validate step to block the merge.
+        # This is fail-closed (safe) but requires a manual review bypass or a
+        # seed commit on main before this workflow can review its own bootstrap PR.
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |

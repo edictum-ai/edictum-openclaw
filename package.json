@@ -45,8 +45,13 @@
     "type": "git",
     "url": "git+https://github.com/edictum-ai/edictum-openclaw.git"
   },
+  "openclaw": {
+    "extensions": [
+      "./dist/native-plugin.js"
+    ]
+  },
   "dependencies": {
-    "@edictum/core": "^0.1.0"
+    "@edictum/core": "^0.2.0"
   },
   "optionalDependencies": {
     "@edictum/server": "^0.1.0"

@@ -215,9 +215,16 @@ jobs:
         run: |
           if [ -f /tmp/review-payload.json ]; then
             TYPE=$(jq -r 'type' /tmp/review-payload.json)
+            # Normalize Claude's output into a valid review payload:
+            # - Bare array: wrap in {commit_id, event, comments}
+            # - Object with comments but no event: inject commit_id + event
             if [ "$TYPE" = "array" ]; then
               echo "Payload is a bare comments array — wrapping in COMMENT event object"
               jq --arg sha "$PR_SHA" '{"commit_id": $sha, "event": "COMMENT", "body": "See summary comment for full review.", "comments": .}' /tmp/review-payload.json > /tmp/review-payload-wrapped.json
+              mv /tmp/review-payload-wrapped.json /tmp/review-payload.json
+            elif [ "$TYPE" = "object" ] && [ "$(jq -r '.event // empty' /tmp/review-payload.json)" = "" ]; then
+              echo "Payload is an object without event — injecting COMMENT event"
+              jq --arg sha "$PR_SHA" '. + {"commit_id": $sha, "event": "COMMENT", "body": (.body // "See summary comment for full review.")}' /tmp/review-payload.json > /tmp/review-payload-wrapped.json
               mv /tmp/review-payload-wrapped.json /tmp/review-payload.json
             fi
             EVENT=$(jq -r '.event // empty' /tmp/review-payload.json)

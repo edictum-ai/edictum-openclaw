@@ -18,6 +18,7 @@ import {
 } from '@edictum/core'
 import type { Edictum } from '@edictum/core'
 
+import { canonicalizeString } from './canonicalize.js'
 import type {
   AfterToolCallEvent,
   BeforeToolCallEvent,
@@ -38,6 +39,30 @@ import { buildFindings, summarizeResult } from './helpers.js'
  * Matches the cap used in @edictum/server's ApprovalBackend.
  */
 const MAX_PENDING = 10_000
+
+// ---------------------------------------------------------------------------
+// OpenClaw parameter alias normalization
+// ---------------------------------------------------------------------------
+// OpenClaw accepts multiple parameter names for the same semantic argument.
+// For example, the file path in read/write/edit tools can be sent as:
+//   path, file_path, filePath, file
+// (See CLAUDE_PARAM_GROUPS in openclaw/dist/plugin-sdk/src/agents/pi-tools.params.d.ts)
+//
+// Contracts only check args.path (the canonical name). Without normalization,
+// a tool call using args.file bypasses every path-based contract — a complete
+// governance bypass for read-protection, credential guards, etc.
+//
+// This map defines { canonical: aliases[] }. The adapter copies the first
+// matching alias to the canonical key before creating the envelope. The
+// original alias key is preserved for audit trail transparency.
+
+/** Aliases → canonical parameter name. Applied before envelope creation. */
+const PARAM_ALIAS_MAP: ReadonlyArray<{
+  readonly canonical: string
+  readonly aliases: readonly string[]
+}> = [
+  { canonical: 'path', aliases: ['file_path', 'filePath', 'file'] },
+]
 
 /** Control character regex — reused for both sessionId and callId validation. */
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/
@@ -480,9 +505,14 @@ export class EdictumOpenClawAdapter {
   ): Promise<BeforeToolCallResult | undefined> {
     const callId = event.toolCallId ?? ctx.toolCallId ?? `ec_${Date.now()}_${this._callIndex}`
 
+    // 1. Normalize parameter aliases → canonical names (args.file → args.path)
+    // 2. Canonicalize string values (strip zero-width chars, map confusables)
+    const normalized = EdictumOpenClawAdapter._normalizeParams(event.params)
+    const params = EdictumOpenClawAdapter._canonicalizeValues(normalized)
+
     let reason: string | null
     try {
-      reason = await this.pre(event.toolName, event.params, callId, ctx)
+      reason = await this.pre(event.toolName, params, callId, ctx)
     } catch {
       // Any unhandled error in pre() must deny, not propagate.
       // Propagating to OpenClaw risks fail-open if the plugin host
@@ -537,6 +567,58 @@ export class EdictumOpenClawAdapter {
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Normalize OpenClaw parameter aliases to canonical names.
+   *
+   * Returns a shallow copy with canonical keys populated from aliases.
+   * Original alias keys are preserved for audit trail transparency.
+   *
+   * The canonical key is only considered "present" if it exists AND is
+   * non-nullish. This prevents a bypass where an adversarial input sends
+   * { path: null, file: "/etc/shadow" } — the null path would satisfy
+   * `canonical in params` but fail every contract match, while the real
+   * path in `file` goes unchecked.
+   */
+  static _normalizeParams(
+    params: Record<string, unknown> | null | undefined,
+  ): Record<string, unknown> {
+    if (!params || typeof params !== 'object') return {}
+    let copy: Record<string, unknown> | null = null
+    for (const { canonical, aliases } of PARAM_ALIAS_MAP) {
+      if (canonical in params && params[canonical] != null) continue
+      for (const alias of aliases) {
+        if (alias in params && params[alias] != null) {
+          if (!copy) copy = { ...params }
+          copy[canonical] = copy[alias]
+          break // first match wins — aliases are in priority order
+        }
+      }
+    }
+    return copy ?? params // no-copy fast path when no normalization needed
+  }
+
+  /**
+   * Canonicalize top-level string values to prevent Unicode bypass attacks.
+   *
+   * Applies NFKC normalization, strips invisible characters, and maps
+   * Cyrillic confusables to ASCII. Only processes top-level string values —
+   * not recursive. Returns the original object if no values changed.
+   */
+  static _canonicalizeValues(
+    params: Record<string, unknown>,
+  ): Record<string, unknown> {
+    let copy: Record<string, unknown> | null = null
+    for (const key of Object.keys(params)) {
+      const val = params[key]
+      if (typeof val !== 'string') continue
+      const canonical = canonicalizeString(val)
+      if (canonical === val) continue // unchanged — reference equality from NFKC fast path
+      if (!copy) copy = { ...params }
+      copy[key] = canonical
+    }
+    return copy ?? params
+  }
 
   /**
    * Resolve the principal for a call. If the resolver throws, returns an

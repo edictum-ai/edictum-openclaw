@@ -5,10 +5,10 @@ export default defineConfig({
   format: ['esm', 'cjs'],
   dts: true,
   clean: true,
-  splitting: false,
   sourcemap: true,
   outDir: 'dist',
   target: 'node22',
-  // Don't bundle dependencies — they resolve from node_modules at runtime.
-  external: ['openclaw', '@edictum/core', '@edictum/server'],
+  // Bundle all deps into dist — OpenClaw's plugin installer expects
+  // self-contained files with zero node_modules resolution.
+  noExternal: [/@edictum\/core/, /@edictum\/server/, /js-yaml/, /argparse/],
 })

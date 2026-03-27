@@ -18,6 +18,7 @@ import {
 } from '@edictum/core'
 import type { Edictum } from '@edictum/core'
 
+import { canonicalizeString } from './canonicalize.js'
 import type {
   AfterToolCallEvent,
   BeforeToolCallEvent,
@@ -504,9 +505,10 @@ export class EdictumOpenClawAdapter {
   ): Promise<BeforeToolCallResult | undefined> {
     const callId = event.toolCallId ?? ctx.toolCallId ?? `ec_${Date.now()}_${this._callIndex}`
 
-    // Normalize OpenClaw parameter aliases so contracts see canonical names.
-    // E.g., args.file → args.path. The original key is kept for audit logs.
-    const params = EdictumOpenClawAdapter._normalizeParams(event.params)
+    // 1. Normalize parameter aliases → canonical names (args.file → args.path)
+    // 2. Canonicalize string values (strip zero-width chars, map confusables)
+    const normalized = EdictumOpenClawAdapter._normalizeParams(event.params)
+    const params = EdictumOpenClawAdapter._canonicalizeValues(normalized)
 
     let reason: string | null
     try {
@@ -594,6 +596,28 @@ export class EdictumOpenClawAdapter {
       }
     }
     return copy ?? params // no-copy fast path when no normalization needed
+  }
+
+  /**
+   * Canonicalize top-level string values to prevent Unicode bypass attacks.
+   *
+   * Applies NFKC normalization, strips invisible characters, and maps
+   * Cyrillic confusables to ASCII. Only processes top-level string values —
+   * not recursive. Returns the original object if no values changed.
+   */
+  static _canonicalizeValues(
+    params: Record<string, unknown>,
+  ): Record<string, unknown> {
+    let copy: Record<string, unknown> | null = null
+    for (const key of Object.keys(params)) {
+      const val = params[key]
+      if (typeof val !== 'string') continue
+      const canonical = canonicalizeString(val)
+      if (canonical === val) continue // unchanged — reference equality from NFKC fast path
+      if (!copy) copy = { ...params }
+      copy[key] = canonical
+    }
+    return copy ?? params
   }
 
   /**

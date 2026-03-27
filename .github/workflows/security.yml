@@ -35,7 +35,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Run Trivy (SARIF)
-        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947e7f25d18f1229e52 # v0.29.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           scan-type: fs
           scanners: vuln,secret,misconfig
@@ -51,7 +51,7 @@ jobs:
           sarif_file: trivy-results.sarif
 
       - name: Run Trivy (table — fail on HIGH+)
-        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947e7f25d18f1229e52 # v0.29.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           scan-type: fs
           scanners: vuln,secret

@@ -59,7 +59,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app-token.outputs.token }}
-          claude_args: '--model claude-sonnet-4-6 --max-turns 30 --allowedTools "Bash(git diff:*),Bash(git log:*),Bash(cat:*),Read,Glob,Grep,Write"'
+          claude_args: '--model claude-sonnet-4-6 --max-turns 30 --allowedTools "Bash(git diff:*),Bash(git log:*),Read,Glob,Grep,Write"'
           prompt: |
             You are an adversarial code reviewer for @edictum/openclaw — a **security plugin** for OpenClaw that enforces runtime contracts on AI agent tool calls. A single governance bypass destroys the product.
 
@@ -130,14 +130,12 @@ jobs:
         id: validate
         run: |
           if [ ! -f /tmp/review.md ]; then
-            echo "::warning::Review file not found — Claude may have exhausted turns"
-            echo "valid=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Review file not found — Claude exhausted turns or crashed. Blocking merge."
+            exit 1
           fi
           if ! head -1 /tmp/review.md | grep -q '<!-- edictum-review -->'; then
-            echo "::warning::Review file missing edictum-review marker — corrupt output"
-            echo "valid=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Review file missing edictum-review marker — corrupt output. Blocking merge."
+            exit 1
           fi
           echo "valid=true" >> "$GITHUB_OUTPUT"
 

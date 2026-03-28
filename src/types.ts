@@ -18,7 +18,7 @@ export interface BeforeToolCallEvent {
  *
  * NOTE: OpenClaw wire protocol uses `block`/`blockReason`. Canonical Edictum
  * terminology is `deny`/`denyReason` — using `block` here is forced by the
- * OpenClaw plugin API contract (PluginHookBeforeToolCallResult).
+ * OpenClaw plugin API rule (PluginHookBeforeToolCallResult).
  *
  * @see OpenClaw src/plugins/types.ts PluginHookBeforeToolCallResult
  */
@@ -82,14 +82,14 @@ export interface OpenClawPluginApi {
  * Finding from a postcondition evaluation.
  */
 export interface Finding {
-  readonly contractId: string | null
+  readonly ruleId: string | null
   readonly message: string
   readonly tags: readonly string[]
   readonly severity: string
 }
 
 /**
- * Result from post-execution governance.
+ * Result from post-execution behavior.
  */
 export interface PostCallResult {
   readonly result: unknown

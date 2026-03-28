@@ -9,7 +9,7 @@ import type { Finding } from './types.js'
 export function buildFindings(postDecision: {
   postconditionsPassed: boolean
   warnings: string[]
-  contractsEvaluated: Record<string, unknown>[]
+  rulesEvaluated: Record<string, unknown>[]
   policyError: boolean
 }): Finding[] {
   if (
@@ -22,16 +22,16 @@ export function buildFindings(postDecision: {
   const findings: Finding[] = []
   for (const w of postDecision.warnings) {
     findings.push({
-      contractId: null,
+      ruleId: null,
       message: w,
       tags: [],
       severity: 'warn',
     })
   }
-  for (const c of postDecision.contractsEvaluated) {
+  for (const c of postDecision.rulesEvaluated) {
     if (c.passed === false || c.policyError === true) {
       findings.push({
-        contractId: (c.name as string) ?? (c.contractId as string) ?? null,
+        ruleId: (c.name as string) ?? (c.ruleId as string) ?? null,
         message: (c.message as string) ?? 'Postcondition failed.',
         tags: (() => {
           const meta = c.metadata as Record<string, unknown> | undefined

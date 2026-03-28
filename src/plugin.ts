@@ -37,14 +37,14 @@ export interface EdictumPluginOptions extends OpenClawAdapterOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * Create an OpenClaw plugin definition that registers Edictum governance hooks.
+ * Create an OpenClaw plugin definition that registers Edictum behavior hooks.
  *
  * Usage:
  * ```typescript
  * import { Edictum } from "@edictum/core";
  * import { createEdictumPlugin } from "@edictum/edictum";
  *
- * const guard = Edictum.fromYaml("contracts/openclaw-governance.yaml");
+ * const guard = Edictum.fromYaml("rules/openclaw-behavior.yaml");
  * export default createEdictumPlugin(guard);
  * ```
  *
@@ -72,9 +72,9 @@ export function createEdictumPlugin(guard: Edictum, options: EdictumPluginOption
 
   return {
     id: 'edictum',
-    name: 'Edictum Contract Enforcement',
+    name: 'Edictum Behavior Enforcement',
     description:
-      'Runtime contract enforcement for AI agent tool calls. Denies exfiltration, credential theft, destructive commands, and prompt injection.',
+      'Runtime behavior enforcement for AI agent tool calls. Denies exfiltration, credential theft, destructive commands, and prompt injection.',
     register(api: OpenClawPluginApi) {
       const adapter = new EdictumOpenClawAdapter(guard, {
         ...options,

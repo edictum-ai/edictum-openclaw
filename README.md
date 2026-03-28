@@ -1,8 +1,8 @@
 # Edictum for OpenClaw
 
-**One command. Zero code changes. Full contract enforcement.**
+**One command. Zero code changes. Full behavior enforcement.**
 
-Runtime contract enforcement for OpenClaw AI agent tool calls. Install the plugin and every tool call is governed by a 770-line security contract bundle — blocking exfiltration, credential theft, destructive commands, prompt injection, and more.
+Runtime behavior enforcement for OpenClaw AI agent tool calls. Install the plugin and every tool call is governed by a 770-line security rule bundle — blocking exfiltration, credential theft, destructive commands, prompt injection, and more.
 
 > Previously published as `@edictum/openclaw` — that package is deprecated. Use `@edictum/edictum` instead.
 
@@ -15,7 +15,7 @@ openclaw plugins install @edictum/edictum
 openclaw config set plugins.allow '["edictum"]'
 ```
 
-Done. All 25 contracts active. No code changes.
+Done. All 25 rules active. No code changes.
 
 ### Path 2: Manual wiring (advanced)
 
@@ -27,7 +27,7 @@ pnpm add @edictum/core @edictum/edictum
 import { Edictum } from '@edictum/core'
 import { createEdictumPlugin } from '@edictum/edictum'
 
-const guard = Edictum.fromYaml('contracts/openclaw-governance.yaml')
+const guard = Edictum.fromYaml('contracts/openclaw-behavior.yaml')
 const plugin = createEdictumPlugin(guard)
 ```
 
@@ -37,7 +37,7 @@ Or use the adapter directly for full control:
 import { Edictum } from '@edictum/core'
 import { EdictumOpenClawAdapter } from '@edictum/edictum'
 
-const guard = Edictum.fromYaml('contracts/openclaw-governance.yaml')
+const guard = Edictum.fromYaml('contracts/openclaw-behavior.yaml')
 const adapter = new EdictumOpenClawAdapter(guard, {
   onDeny: (envelope, reason) => console.error(`[edictum] denied: ${reason}`),
 })
@@ -45,13 +45,13 @@ const adapter = new EdictumOpenClawAdapter(guard, {
 
 ## What It Does
 
-Edictum enforces **contracts** — declarative YAML rules evaluated before and after every tool call. Unlike prompt-based guardrails, contracts cannot be talked past by the LLM.
+Edictum enforces **rules** — declarative YAML rules evaluated before and after every tool call. Unlike prompt-based guardrails, contracts cannot be talked past by the LLM.
 
-When a tool call violates a contract, Edictum **denies it** before execution and logs an audit event. No data leaves, no file is deleted, no credential is exposed.
+When a tool call violates a rule, Edictum **denies it** before execution and logs an audit event. No data leaves, no file is deleted, no credential is exposed.
 
 ## What's Included
 
-The plugin ships with `openclaw-governance.yaml` — a curated bundle of 25 contracts covering 11 security categories:
+The plugin ships with `openclaw-behavior.yaml` — a curated bundle of 25 rules covering 11 security categories:
 
 | Category | What it blocks |
 |----------|---------------|
@@ -77,7 +77,7 @@ Configure in your OpenClaw config under `plugins.entries.edictum`:
     "entries": {
       "edictum": {
         "mode": "enforce",
-        "contractsPath": "/path/to/custom-contracts.yaml"
+        "rulesPath": "/path/to/custom-contracts.yaml"
       }
     }
   }
@@ -90,7 +90,7 @@ Configure in your OpenClaw config under `plugins.entries.edictum`:
 |--------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable/disable the plugin |
 | `mode` | `"enforce"` \| `"observe"` | `"enforce"` | Enforce blocks violations; observe logs without blocking |
-| `contractsPath` | string | bundled YAML | Path to a custom contract bundle |
+| `rulesPath` | string | bundled YAML | Path to a custom rule bundle |
 | `serverUrl` | string | — | Edictum Console URL for HITL approvals and audit feeds |
 | `apiKey` | string | — | API key for Console connection |
 | `agentId` | string | — | Agent identifier for Console fleet monitoring |
@@ -121,7 +121,7 @@ cd ~/.openclaw/extensions/edictum && npm install @edictum/server
 
 When `serverUrl` and `apiKey` are configured, the plugin connects to Console instead of loading local contracts. If `@edictum/server` is not installed or the connection fails, you get a clear error message.
 
-Without server config, the plugin uses the bundled `openclaw-governance.yaml` — no network required.
+Without server config, the plugin uses the bundled `openclaw-behavior.yaml` — no network required.
 
 ### Observe Mode
 
@@ -143,23 +143,23 @@ Start in observe mode to audit what would be denied without interrupting your wo
 
 1. OpenClaw loads the plugin at startup
 2. Edictum registers `before_tool_call` and `after_tool_call` hooks (priority 999 — runs first)
-3. Before each tool call, preconditions are evaluated against the contract bundle
+3. Before each tool call, preconditions are evaluated against the rule bundle
 4. Violations are denied with a reason; allowed calls proceed normally
 5. After execution, postconditions check the result for policy violations
 6. Every decision is emitted as a structured audit event
 
-## Custom Contracts
+## Custom Rules
 
-Write your own contracts in YAML following the Edictum contract schema:
+Write your own contracts in YAML following the Edictum rule schema:
 
 ```yaml
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
-  name: my-custom-governance
+  name: my-custom-behavior
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: no-production-writes
     type: pre
     tool: "*"
@@ -168,7 +168,7 @@ contracts:
         - args.path: { matches: "production|prod-db|live-server" }
         - args.command: { matches: "production|prod-db|live-server" }
     then:
-      effect: deny
+      action: block
       message: "Production operations require manual approval."
 ```
 
@@ -179,7 +179,7 @@ Point the plugin at your bundle:
   "plugins": {
     "entries": {
       "edictum": {
-        "contractsPath": "~/.openclaw/contracts/my-governance.yaml"
+        "rulesPath": "~/.openclaw/contracts/my-behavior.yaml"
       }
     }
   }

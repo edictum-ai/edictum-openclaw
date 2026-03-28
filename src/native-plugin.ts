@@ -18,15 +18,15 @@ const currentDir =
     ? __dirname
     : dirname(fileURLToPath(import.meta.url))
 
-/** Default contracts: bundled governance YAML shipped with this plugin. */
-const DEFAULT_CONTRACTS = resolve(currentDir, '..', 'contracts', 'openclaw-governance.yaml')
+/** Default rules: bundled behavior YAML shipped with this plugin. */
+const DEFAULT_RULES = resolve(currentDir, '..', 'rules', 'openclaw-behavior.yaml')
 
 /** Hook priority — run before most other plugins. */
 const HOOK_PRIORITY = 999
 
 interface PluginConfig {
   readonly enabled?: boolean
-  readonly contractsPath?: string
+  readonly rulesPath?: string
   readonly mode?: 'enforce' | 'observe'
   readonly serverUrl?: string
   readonly apiKey?: string
@@ -125,7 +125,7 @@ const configSchema = {
   additionalProperties: false,
   properties: {
     enabled: { type: 'boolean' },
-    contractsPath: { type: 'string' },
+    rulesPath: { type: 'string' },
     mode: { type: 'string', enum: ['enforce', 'observe'] },
     serverUrl: { type: 'string' },
     apiKey: { type: 'string' },
@@ -187,13 +187,13 @@ function registerLocalHooks(
   mode: 'enforce' | 'observe',
   log?: PluginLogger,
 ): Edictum {
-  const contractsPath = config.contractsPath ?? DEFAULT_CONTRACTS
-  const guard = Edictum.fromYaml(contractsPath, { mode })
+  const rulesPath = config.rulesPath ?? DEFAULT_RULES
+  const guard = Edictum.fromYaml(rulesPath, { mode })
 
   const plugin = createEdictumPlugin(guard, { priority: HOOK_PRIORITY })
   plugin.register(api as Parameters<typeof plugin.register>[0])
 
-  log?.info(`loaded ${contractsPath} in ${mode} mode`)
+  log?.info(`loaded ${rulesPath} in ${mode} mode`)
   return guard
 }
 
@@ -220,7 +220,7 @@ function registerPlugin(api: any) {
   if (typeof api.registerCommand === 'function') {
     api.registerCommand({
       name: 'edictum',
-      description: 'Show Edictum governance status',
+      description: 'Show Edictum behavior status',
       handler: () => {
         if (!activeGuard) {
           return { text: 'Edictum guard not initialized yet.' }
@@ -230,7 +230,7 @@ function registerPlugin(api: any) {
           ``,
           `Mode: \`${activeGuard.mode}\``,
           `Policy version: \`${activeGuard.policyVersion ?? 'unknown'}\``,
-          `Contracts path: \`${config.contractsPath ?? DEFAULT_CONTRACTS}\``,
+          `Rules path: \`${config.rulesPath ?? DEFAULT_RULES}\``,
         ]
         if (config.serverUrl) {
           lines.push(`Console: \`${config.serverUrl}\``)
@@ -257,9 +257,9 @@ function registerPlugin(api: any) {
 
 const pluginDef = {
   id: 'edictum',
-  name: 'Edictum Contract Enforcement',
+  name: 'Edictum Behavior Enforcement',
   description:
-    'Runtime contract enforcement for AI agent tool calls. Denies exfiltration, credential theft, destructive commands, and prompt injection.',
+    'Runtime behavior enforcement for AI agent tool calls. Denies exfiltration, credential theft, destructive commands, and prompt injection.',
   configSchema,
   register: registerPlugin,
 }

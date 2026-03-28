@@ -1,11 +1,11 @@
 // @edictum/edictum — OpenClaw adapter for edictum
-// Translates between OpenClaw plugin hooks and Edictum's GovernancePipeline.
+// Translates between OpenClaw plugin hooks and Edictum's CheckPipeline.
 // NOTE: 500+ lines — approved due to adapter pattern requiring single-class cohesion (matches vercel-ai/claude-sdk)
 
 // Node global — project omits @types/node; only used for eviction warning.
 declare const console: { warn(...args: unknown[]): void }
 
-import type { Principal, ToolEnvelope, AuditAction as AuditActionType } from '@edictum/core'
+import type { Principal, ToolCall, AuditAction as AuditActionType } from '@edictum/core'
 import {
   ApprovalStatus,
   AuditAction,
@@ -13,7 +13,7 @@ import {
   createEnvelope,
   defaultSuccessCheck,
   EdictumConfigError,
-  GovernancePipeline,
+  CheckPipeline,
   Session,
 } from '@edictum/core'
 import type { Edictum } from '@edictum/core'
@@ -48,9 +48,9 @@ const MAX_PENDING = 10_000
 //   path, file_path, filePath, file
 // (See CLAUDE_PARAM_GROUPS in openclaw/dist/plugin-sdk/src/agents/pi-tools.params.d.ts)
 //
-// Contracts only check args.path (the canonical name). Without normalization,
-// a tool call using args.file bypasses every path-based contract — a complete
-// governance bypass for read-protection, credential guards, etc.
+// Rules only check args.path (the canonical name). Without normalization,
+// a tool call using args.file bypasses every path-based rule — a complete
+// behavior bypass for read-protection, credential guards, etc.
 //
 // This map defines { canonical: aliases[] }. The adapter copies the first
 // matching alias to the canonical key before creating the envelope. The
@@ -93,20 +93,20 @@ export interface OpenClawAdapterOptions {
 
   /** Called on every denial. Errors are silently caught. */
   readonly onDeny?: (
-    envelope: Readonly<ToolEnvelope>,
+    envelope: Readonly<ToolCall>,
     reason: string,
     source: string | null,
   ) => void
 
   /** Called on every allow. Errors are silently caught. */
-  readonly onAllow?: (envelope: Readonly<ToolEnvelope>) => void
+  readonly onAllow?: (envelope: Readonly<ToolCall>) => void
 
   /**
    * Called when a postcondition produces findings.
    * Errors are silently caught.
    */
   readonly onPostconditionWarn?: (
-    envelope: Readonly<ToolEnvelope>,
+    envelope: Readonly<ToolCall>,
     findings: readonly Finding[],
   ) => void
 
@@ -122,7 +122,7 @@ export interface OpenClawAdapterOptions {
 // ---------------------------------------------------------------------------
 
 interface PendingCall {
-  readonly envelope: Readonly<ToolEnvelope>
+  readonly envelope: Readonly<ToolCall>
   readonly startMs: number
 }
 
@@ -132,7 +132,7 @@ interface PendingCall {
 
 export class EdictumOpenClawAdapter {
   private readonly _guard: Edictum
-  private readonly _pipeline: GovernancePipeline
+  private readonly _pipeline: CheckPipeline
   private readonly _session: Session
   private readonly _sessionId: string
   private _callIndex = 0
@@ -149,17 +149,17 @@ export class EdictumOpenClawAdapter {
     | ((toolName: string, toolInput: Record<string, unknown>, ctx: ToolHookContext) => Principal)
     | null
   private readonly _onDeny:
-    | ((envelope: Readonly<ToolEnvelope>, reason: string, source: string | null) => void)
+    | ((envelope: Readonly<ToolCall>, reason: string, source: string | null) => void)
     | null
-  private readonly _onAllow: ((envelope: Readonly<ToolEnvelope>) => void) | null
+  private readonly _onAllow: ((envelope: Readonly<ToolCall>) => void) | null
   private readonly _onPostconditionWarn:
-    | ((envelope: Readonly<ToolEnvelope>, findings: readonly Finding[]) => void)
+    | ((envelope: Readonly<ToolCall>, findings: readonly Finding[]) => void)
     | null
   private readonly _successCheck: ((toolName: string, result: unknown) => boolean) | null
 
   constructor(guard: Edictum, options: OpenClawAdapterOptions = {}) {
     this._guard = guard
-    this._pipeline = new GovernancePipeline(guard)
+    this._pipeline = new CheckPipeline(guard)
 
     const sessionId = options.sessionId ?? guard.sessionId
     // Length cap (#52) + control character check. Same precautionary cap as callId.
@@ -279,7 +279,7 @@ export class EdictumOpenClawAdapter {
       })
     } catch {
       // createEnvelope throws EdictumConfigError for invalid toolName (control chars, etc.)
-      // Return denial string per pre()'s API contract — do not propagate.
+      // Return denial string per pre()'s API rule — do not propagate.
       try {
         await this._guard.auditSink.emit(
           createAuditEvent({
@@ -381,7 +381,7 @@ export class EdictumOpenClawAdapter {
         return null
       }
 
-      const reason = decision.reason ?? 'Denied by contract.'
+      const reason = decision.reason ?? 'Denied by rule.'
       this._safeDeny(envelope, reason, decision.decisionSource)
       await this._emitAuditPre(envelope, decision, AuditAction.CALL_DENIED)
       return reason
@@ -392,7 +392,7 @@ export class EdictumOpenClawAdapter {
     this._safeAllow(envelope)
     this._trackPending(callId, { envelope, startMs: Date.now() })
 
-    // Observe-mode audits — emit individual events for observe_alongside contracts
+    // Observe-mode audits — emit individual events for observe_alongside rules
     await this._emitObserveResults(envelope, decision)
 
     return null
@@ -455,7 +455,7 @@ export class EdictumOpenClawAdapter {
           decisionName: null,
           reason: afterEvent.error ?? null,
           hooksEvaluated: [],
-          contractsEvaluated: postDecision.contractsEvaluated,
+          rulesEvaluated: postDecision.rulesEvaluated,
           toolSuccess,
           postconditionsPassed: postDecision.postconditionsPassed,
           durationMs,
@@ -525,7 +525,7 @@ export class EdictumOpenClawAdapter {
             callId,
             toolName: event.toolName,
             action: AuditAction.CALL_DENIED,
-            reason: 'Governance error — call denied for safety',
+            reason: 'Behavior error — call denied for safety',
             mode: this._guard.mode,
             policyVersion: this._guard.policyVersion,
           }),
@@ -533,12 +533,12 @@ export class EdictumOpenClawAdapter {
       } catch {
         // Audit errors must never block
       }
-      // NOTE: `block`/`blockReason` forced by OpenClaw plugin API contract.
-      return { block: true, blockReason: 'Governance error — call denied for safety' }
+      // NOTE: `block`/`blockReason` forced by OpenClaw plugin API rule.
+      return { block: true, blockReason: 'Behavior error — call denied for safety' }
     }
 
     if (reason !== null) {
-      // NOTE: `block`/`blockReason` forced by OpenClaw plugin API contract.
+      // NOTE: `block`/`blockReason` forced by OpenClaw plugin API rule.
       return { block: true, blockReason: reason }
     }
     // Allow: return nothing (OpenClaw treats undefined as allow)
@@ -577,7 +577,7 @@ export class EdictumOpenClawAdapter {
    * The canonical key is only considered "present" if it exists AND is
    * non-nullish. This prevents a bypass where an adversarial input sends
    * { path: null, file: "/etc/shadow" } — the null path would satisfy
-   * `canonical in params` but fail every contract match, while the real
+   * `canonical in params` but fail every rule match, while the real
    * path in `file` goes unchecked.
    */
   static _normalizeParams(
@@ -684,11 +684,11 @@ export class EdictumOpenClawAdapter {
   }
 
   /**
-   * Emit individual audit events for observe_alongside contracts.
+   * Emit individual audit events for observe_alongside rules.
    * Matches vercel-ai pattern (lines 382-413). Errors swallowed per-result.
    */
   private async _emitObserveResults(
-    envelope: Readonly<ToolEnvelope>,
+    envelope: Readonly<ToolCall>,
     decision: { observeResults?: Record<string, unknown>[] },
   ): Promise<void> {
     const results = decision.observeResults
@@ -759,7 +759,7 @@ export class EdictumOpenClawAdapter {
     this._pending.set(callId, pending)
   }
 
-  private _safeDeny(envelope: Readonly<ToolEnvelope>, reason: string, source: string | null): void {
+  private _safeDeny(envelope: Readonly<ToolCall>, reason: string, source: string | null): void {
     try {
       this._onDeny?.(envelope, reason, source)
     } catch {
@@ -767,7 +767,7 @@ export class EdictumOpenClawAdapter {
     }
   }
 
-  private _safeAllow(envelope: Readonly<ToolEnvelope>): void {
+  private _safeAllow(envelope: Readonly<ToolCall>): void {
     try {
       this._onAllow?.(envelope)
     } catch {
@@ -776,7 +776,7 @@ export class EdictumOpenClawAdapter {
   }
 
   private _safePostconditionWarn(
-    envelope: Readonly<ToolEnvelope>,
+    envelope: Readonly<ToolCall>,
     findings: readonly Finding[],
   ): void {
     try {
@@ -787,13 +787,13 @@ export class EdictumOpenClawAdapter {
   }
 
   private async _emitAuditPre(
-    envelope: Readonly<ToolEnvelope>,
+    envelope: Readonly<ToolCall>,
     decision: {
       reason: string | null
       decisionSource: string | null
       decisionName: string | null
       hooksEvaluated: Record<string, unknown>[]
-      contractsEvaluated: Record<string, unknown>[]
+      rulesEvaluated: Record<string, unknown>[]
       policyError: boolean
       observeResults?: Record<string, unknown>[]
     },
@@ -821,7 +821,7 @@ export class EdictumOpenClawAdapter {
           decisionName: decision.decisionName,
           reason: decision.reason,
           hooksEvaluated: decision.hooksEvaluated,
-          contractsEvaluated: decision.contractsEvaluated,
+          rulesEvaluated: decision.rulesEvaluated,
           toolSuccess: null,
           postconditionsPassed: null,
           durationMs: 0,

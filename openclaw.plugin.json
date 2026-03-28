@@ -1,7 +1,7 @@
 {
   "id": "edictum",
-  "name": "Edictum Contract Enforcement",
-  "description": "Runtime contract enforcement for AI agent tool calls. Denies exfiltration, credential theft, destructive commands, and prompt injection.",
+  "name": "Edictum Behavior Enforcement",
+  "description": "Runtime behavior enforcement for AI agent tool calls. Denies exfiltration, credential theft, destructive commands, and prompt injection.",
   "version": "0.3.0",
   "hooks": ["before_tool_call", "after_tool_call"],
   "configSchema": {
@@ -11,7 +11,7 @@
       "enabled": {
         "type": "boolean"
       },
-      "contractsPath": {
+      "rulesPath": {
         "type": "string"
       },
       "mode": {
@@ -30,9 +30,9 @@
     }
   },
   "uiHints": {
-    "contractsPath": {
-      "label": "Contracts Path",
-      "help": "Path to a custom YAML contract bundle (defaults to the bundled openclaw-governance.yaml)"
+    "rulesPath": {
+      "label": "Rules Path",
+      "help": "Path to a custom YAML rule bundle (defaults to the bundled openclaw-behavior.yaml)"
     },
     "mode": {
       "label": "Enforcement Mode",

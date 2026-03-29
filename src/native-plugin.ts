@@ -345,14 +345,14 @@ function registerPlugin(api: any) {
 
   if (config.workflowPath) {
     registerWorkflowHooks(api, config, mode, log, (adapter) => {
-      activeGuard = (adapter as { readonly _guard?: GuardInstance })._guard ?? null
+      activeGuard = (adapter as unknown as { readonly _guard?: GuardInstance })._guard ?? null
     })
     return
   }
 
   if (config.serverUrl && config.apiKey) {
     registerServerHooks(api, config, mode, log, (adapter) => {
-      activeGuard = (adapter as { readonly _guard?: GuardInstance })._guard ?? null
+      activeGuard = (adapter as unknown as { readonly _guard?: GuardInstance })._guard ?? null
     })
     return
   }

@@ -328,6 +328,18 @@ describe('workflow integration', () => {
 
     expect(result).toBeUndefined()
     expect(sink.events.some((event) => event.action === 'call_would_deny')).toBe(true)
+
+    await handlers['after_tool_call'].handler(
+      makeAfterEvent({
+        toolCallId: 'tc-observe-workflow',
+        toolName: 'Edit',
+        params: { path: 'src/app.ts' },
+        result: 'edited',
+      }),
+      makeCtx({ toolName: 'Edit', toolCallId: 'tc-observe-workflow' }),
+    )
+
+    expect(await runtime.getState('sid-mimi')).toEqual({ reads: [], calls: {} })
   })
 
   it('evaluates workflow sequencing before contract HITL approval', async () => {

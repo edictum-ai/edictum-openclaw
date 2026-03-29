@@ -330,7 +330,6 @@ export class EdictumOpenClawAdapter {
         if (reason !== null) {
           return reason
         }
-        workflowStageId = workflowDecision.stageId
       }
 
       if (workflowDecision.action === 'pending_approval') {

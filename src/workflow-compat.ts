@@ -166,7 +166,7 @@ function extractWorkflowApprovalTimeoutEffect(value: WorkflowDecisionLike): stri
 }
 
 export function isWorkflowTestMode(): boolean {
-  return process.env.VITEST === 'true'
+  return process.env.EDICTUM_WORKFLOW_TEST_MODE === 'true'
 }
 
 function normalizeWorkflowAction(action: unknown): NormalizedWorkflowDecision['action'] {

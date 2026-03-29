@@ -1,16 +1,22 @@
 // @edictum/edictum — native OpenClaw plugin entry point
 // Uses the formal Plugin SDK definePluginEntry for full integration.
 
-import { Edictum } from '@edictum/core'
+import * as EdictumCore from '@edictum/core'
 import { createEdictumPlugin } from './plugin.js'
 import { EdictumOpenClawAdapter } from './adapter.js'
 import type {
   AfterToolCallEvent,
   BeforeToolCallEvent,
+  EdictumNativePluginConfig,
   ToolHookContext,
 } from './types.js'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isWorkflowTestMode, loadWorkflowRuntime } from './workflow-compat.js'
+import type { WorkflowCoreModuleLike } from './workflow-compat.js'
+
+type PluginConfig = EdictumNativePluginConfig
+type GuardInstance = InstanceType<typeof EdictumCore.Edictum>
 
 // Resolve __dirname for both ESM and CJS contexts
 const currentDir =
@@ -23,15 +29,6 @@ const DEFAULT_CONTRACTS = resolve(currentDir, '..', 'contracts', 'openclaw-gover
 
 /** Hook priority — run before most other plugins. */
 const HOOK_PRIORITY = 999
-
-interface PluginConfig {
-  readonly enabled?: boolean
-  readonly contractsPath?: string
-  readonly mode?: 'enforce' | 'observe'
-  readonly serverUrl?: string
-  readonly apiKey?: string
-  readonly agentId?: string
-}
 
 // ---------------------------------------------------------------------------
 // SDK import — graceful fallback for older OpenClaw versions without the SDK
@@ -78,26 +75,54 @@ interface PluginLogger {
 }
 
 // ---------------------------------------------------------------------------
-// Server mode: lazy adapter initialization
+// Plugin config schema — matches openclaw.plugin.json
 // ---------------------------------------------------------------------------
+
+const configSchema = {
+  type: 'object' as const,
+  additionalProperties: false,
+  properties: {
+    enabled: { type: 'boolean' },
+    contractsPath: { type: 'string' },
+    workflowPath: { type: 'string' },
+    mode: { type: 'string', enum: ['enforce', 'observe'] },
+    serverUrl: { type: 'string' },
+    apiKey: { type: 'string' },
+    agentId: { type: 'string' },
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Adapter initialization
+// ---------------------------------------------------------------------------
+
+async function loadServerModule(
+  message: string,
+  log?: PluginLogger,
+): Promise<Record<string, unknown>> {
+  let serverModule: Record<string, unknown>
+  try {
+    serverModule = await import('@edictum/server')
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    if (detail.includes('Cannot find module') || detail.includes('MODULE_NOT_FOUND')) {
+      log?.error(message)
+      throw new Error(message)
+    }
+    throw err
+  }
+  return serverModule
+}
 
 async function initServerAdapter(
   config: PluginConfig,
   mode: 'enforce' | 'observe',
   log?: PluginLogger,
 ): Promise<EdictumOpenClawAdapter> {
-  let serverModule: Record<string, unknown>
-  try {
-    serverModule = await import('@edictum/server')
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    if (message.includes('Cannot find module') || message.includes('MODULE_NOT_FOUND')) {
-      const msg = 'Edictum Console mode requires @edictum/server. Install it with: npm install @edictum/server'
-      log?.error(msg)
-      throw new Error(msg)
-    }
-    throw err
-  }
+  const serverModule = await loadServerModule(
+    'Edictum Console mode requires @edictum/server. Install it with: npm install @edictum/server',
+    log,
+  )
 
   if (!('createServerGuard' in serverModule)) {
     const msg = 'createServerGuard not found — update @edictum/server to >=0.2.0'
@@ -116,46 +141,81 @@ async function initServerAdapter(
   return new EdictumOpenClawAdapter(guard)
 }
 
-// ---------------------------------------------------------------------------
-// Plugin config schema — matches openclaw.plugin.json
-// ---------------------------------------------------------------------------
-
-const configSchema = {
-  type: 'object' as const,
-  additionalProperties: false,
-  properties: {
-    enabled: { type: 'boolean' },
-    contractsPath: { type: 'string' },
-    mode: { type: 'string', enum: ['enforce', 'observe'] },
-    serverUrl: { type: 'string' },
-    apiKey: { type: 'string' },
-    agentId: { type: 'string' },
-  },
-}
-
-// ---------------------------------------------------------------------------
-// Shared hook registration — eliminates duplication between code paths
-// ---------------------------------------------------------------------------
-
-function registerServerHooks(
-  api: any,
+async function initWorkflowAdapter(
   config: PluginConfig,
   mode: 'enforce' | 'observe',
   log?: PluginLogger,
-  onReady?: (adapter: EdictumOpenClawAdapter) => void,
-) {
-  let adapterPromise: Promise<EdictumOpenClawAdapter> | null = null
-
-  const getAdapter = (): Promise<EdictumOpenClawAdapter> => {
-    if (!adapterPromise) {
-      adapterPromise = initServerAdapter(config, mode, log).then((adapter) => {
-        onReady?.(adapter)
-        return adapter
-      })
-    }
-    return adapterPromise
+): Promise<EdictumOpenClawAdapter> {
+  const contractsPath = config.contractsPath ?? DEFAULT_CONTRACTS
+  const workflowPath = config.workflowPath
+  if (!workflowPath) {
+    throw new Error('workflowPath is required for workflow-enabled OpenClaw integration')
   }
 
+  const workflowRuntime = loadWorkflowRuntime(
+    EdictumCore as unknown as WorkflowCoreModuleLike,
+    workflowPath,
+  )
+  const guardOptions: Record<string, unknown> = {
+    mode,
+    workflowRuntime,
+  }
+
+  if (config.serverUrl && config.apiKey) {
+    const serverModule = await loadServerModule(
+      'Edictum Console-backed workflow persistence requires @edictum/server. Install it with: npm install @edictum/server',
+      log,
+    )
+    const {
+      EdictumServerClient,
+      ServerApprovalBackend,
+      ServerAuditSink,
+      ServerBackend,
+    } = serverModule as Record<string, new (...args: unknown[]) => unknown>
+
+    if (
+      typeof EdictumServerClient !== 'function' ||
+      typeof ServerBackend !== 'function' ||
+      typeof ServerApprovalBackend !== 'function' ||
+      typeof ServerAuditSink !== 'function'
+    ) {
+      throw new Error(
+        'Workflow persistence requires @edictum/server exports: EdictumServerClient, ServerBackend, ServerApprovalBackend, and ServerAuditSink',
+      )
+    }
+
+    const client = new EdictumServerClient({
+      baseUrl: config.serverUrl,
+      apiKey: config.apiKey,
+      agentId: config.agentId ?? 'openclaw',
+    })
+
+    guardOptions['backend'] = new ServerBackend(client)
+    guardOptions['approvalBackend'] = new ServerApprovalBackend(client)
+    guardOptions['auditSink'] = new ServerAuditSink(client)
+  } else if (!isWorkflowTestMode()) {
+    throw new Error(
+      'workflowPath requires serverUrl and apiKey for persistent Mimi/OpenClaw workflow state. MemoryBackend is test-only for workflow-enabled runs.',
+    )
+  }
+
+  const guard = EdictumCore.Edictum.fromYaml(
+    contractsPath,
+    guardOptions as never,
+  ) as unknown as GuardInstance
+
+  log?.info(`loaded workflow ${workflowPath} with contracts ${contractsPath} in ${mode} mode`)
+  return new EdictumOpenClawAdapter(guard, { workflowRuntime })
+}
+
+// ---------------------------------------------------------------------------
+// Shared hook registration
+// ---------------------------------------------------------------------------
+
+function registerAsyncHooks(
+  api: any,
+  getAdapter: () => Promise<EdictumOpenClawAdapter>,
+) {
   api.on(
     'before_tool_call',
     async (event: unknown, ctx: unknown) => {
@@ -181,14 +241,58 @@ function registerServerHooks(
   )
 }
 
+function registerServerHooks(
+  api: any,
+  config: PluginConfig,
+  mode: 'enforce' | 'observe',
+  log?: PluginLogger,
+  onReady?: (adapter: EdictumOpenClawAdapter) => void,
+) {
+  let adapterPromise: Promise<EdictumOpenClawAdapter> | null = null
+
+  const getAdapter = (): Promise<EdictumOpenClawAdapter> => {
+    if (!adapterPromise) {
+      adapterPromise = initServerAdapter(config, mode, log).then((adapter) => {
+        onReady?.(adapter)
+        return adapter
+      })
+    }
+    return adapterPromise
+  }
+
+  registerAsyncHooks(api, getAdapter)
+}
+
+function registerWorkflowHooks(
+  api: any,
+  config: PluginConfig,
+  mode: 'enforce' | 'observe',
+  log?: PluginLogger,
+  onReady?: (adapter: EdictumOpenClawAdapter) => void,
+) {
+  let adapterPromise: Promise<EdictumOpenClawAdapter> | null = null
+
+  const getAdapter = (): Promise<EdictumOpenClawAdapter> => {
+    if (!adapterPromise) {
+      adapterPromise = initWorkflowAdapter(config, mode, log).then((adapter) => {
+        onReady?.(adapter)
+        return adapter
+      })
+    }
+    return adapterPromise
+  }
+
+  registerAsyncHooks(api, getAdapter)
+}
+
 function registerLocalHooks(
   api: any,
   config: PluginConfig,
   mode: 'enforce' | 'observe',
   log?: PluginLogger,
-): Edictum {
+): GuardInstance {
   const contractsPath = config.contractsPath ?? DEFAULT_CONTRACTS
-  const guard = Edictum.fromYaml(contractsPath, { mode })
+  const guard = EdictumCore.Edictum.fromYaml(contractsPath, { mode })
 
   const plugin = createEdictumPlugin(guard, { priority: HOOK_PRIORITY })
   plugin.register(api as Parameters<typeof plugin.register>[0])
@@ -205,18 +309,14 @@ function registerPlugin(api: any) {
   const log: PluginLogger | undefined = api.logger
   const config = (api.pluginConfig ?? {}) as PluginConfig
 
-  // Honor explicit disable
   if (config.enabled === false) {
     log?.info('plugin disabled via config')
     return
   }
 
   const mode = config.mode ?? 'enforce'
+  let activeGuard: GuardInstance | null = null
 
-  // Track the active guard for the status command
-  let activeGuard: Edictum | null = null
-
-  // ── CLI command (if SDK supports it) ────────────────────────────
   if (typeof api.registerCommand === 'function') {
     api.registerCommand({
       name: 'edictum',
@@ -232,6 +332,9 @@ function registerPlugin(api: any) {
           `Policy version: \`${activeGuard.policyVersion ?? 'unknown'}\``,
           `Contracts path: \`${config.contractsPath ?? DEFAULT_CONTRACTS}\``,
         ]
+        if (config.workflowPath) {
+          lines.push(`Workflow path: \`${config.workflowPath}\``)
+        }
         if (config.serverUrl) {
           lines.push(`Console: \`${config.serverUrl}\``)
         }
@@ -240,15 +343,21 @@ function registerPlugin(api: any) {
     })
   }
 
-  // ── Hook registration ───────────────────────────────────────────
+  if (config.workflowPath) {
+    registerWorkflowHooks(api, config, mode, log, (adapter) => {
+      activeGuard = (adapter as { readonly _guard?: GuardInstance })._guard ?? null
+    })
+    return
+  }
+
   if (config.serverUrl && config.apiKey) {
     registerServerHooks(api, config, mode, log, (adapter) => {
-      // EdictumOpenClawAdapter exposes the guard via a getter
-      activeGuard = (adapter as any)._guard ?? null
+      activeGuard = (adapter as { readonly _guard?: GuardInstance })._guard ?? null
     })
-  } else {
-    activeGuard = registerLocalHooks(api, config, mode, log)
+    return
   }
+
+  activeGuard = registerLocalHooks(api, config, mode, log)
 }
 
 // ---------------------------------------------------------------------------

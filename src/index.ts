@@ -19,6 +19,7 @@ export type {
   AfterToolCallEvent,
   BeforeToolCallEvent,
   BeforeToolCallResult,
+  EdictumNativePluginConfig,
   Finding,
   OpenClawPluginApi,
   PostCallResult,

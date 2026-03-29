@@ -19,6 +19,14 @@ import {
 import type { Edictum } from '@edictum/core'
 
 import { canonicalizeString } from './canonicalize.js'
+import {
+  evaluateWorkflow,
+  extractWorkflowStageId,
+  hasNativeWorkflowSupport,
+  recordWorkflowApproval,
+  recordWorkflowResult,
+} from './workflow-compat.js'
+import type { NormalizedWorkflowDecision, WorkflowRuntimeLike } from './workflow-compat.js'
 import type {
   AfterToolCallEvent,
   BeforeToolCallEvent,
@@ -75,6 +83,9 @@ export interface OpenClawAdapterOptions {
   /** Stable session ID. Defaults to guard.sessionId. */
   readonly sessionId?: string
 
+  /** Optional workflow runtime for native OpenClaw workflow gate enforcement. */
+  readonly workflowRuntime?: WorkflowRuntimeLike | null
+
   /**
    * Static principal attached to every envelope.
    * Overridden by principalResolver if both are set.
@@ -124,6 +135,8 @@ export interface OpenClawAdapterOptions {
 interface PendingCall {
   readonly envelope: Readonly<ToolEnvelope>
   readonly startMs: number
+  readonly sessionId: string
+  readonly workflowStageId: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -133,8 +146,9 @@ interface PendingCall {
 export class EdictumOpenClawAdapter {
   private readonly _guard: Edictum
   private readonly _pipeline: GovernancePipeline
-  private readonly _session: Session
   private readonly _sessionId: string
+  private readonly _workflowRuntime: WorkflowRuntimeLike | null
+  private readonly _workflowHandledNatively: boolean
   private _callIndex = 0
   private readonly _pending = new Map<string, PendingCall>()
 
@@ -170,7 +184,8 @@ export class EdictumOpenClawAdapter {
       throw new EdictumConfigError('sessionId contains control characters')
     }
     this._sessionId = sessionId
-    this._session = new Session(this._sessionId, guard.backend)
+    this._workflowRuntime = options.workflowRuntime ?? null
+    this._workflowHandledNatively = hasNativeWorkflowSupport(guard)
 
     this._principal = options.principal ?? null
     this._principalResolver = options.principalResolver ?? null
@@ -212,6 +227,8 @@ export class EdictumOpenClawAdapter {
     callId: string,
     ctx: ToolHookContext,
   ): Promise<string | null> {
+    const session = this._createSession(ctx)
+
     // Validate callId — length cap (#52) + control character check (#43).
     // The regex is O(n) character class with no backtracking risk, but we cap
     // input length as a precautionary measure per project security policy.
@@ -299,8 +316,35 @@ export class EdictumOpenClawAdapter {
       return 'Invalid toolName'
     }
 
-    await this._session.incrementAttempts()
-    const decision = await this._pipeline.preExecute(envelope, this._session)
+    await session.incrementAttempts()
+    const decision = await this._pipeline.preExecute(envelope, session)
+    let workflowStageId = extractWorkflowStageId(decision)
+
+    if (
+      this._workflowRuntime &&
+      !this._workflowHandledNatively &&
+      decision.action === 'allow' &&
+      workflowStageId === null
+    ) {
+      const workflowDecision = await evaluateWorkflow(this._workflowRuntime, session, envelope)
+      if (workflowDecision.action === 'block') {
+        const reason = workflowDecision.reason ?? 'Workflow blocked this tool call.'
+        this._safeDeny(envelope, reason, 'workflow')
+        await this._emitAuditPre(
+          envelope,
+          this._createWorkflowAuditDecision(workflowDecision),
+          AuditAction.CALL_DENIED,
+          session,
+        )
+        return reason
+      }
+
+      if (workflowDecision.action === 'pending_approval') {
+        return await this._handleWorkflowApproval(envelope, workflowDecision, session, callId)
+      }
+
+      workflowStageId = workflowDecision.stageId
+    }
 
     // --- Pending approval (same pattern as vercel-ai adapter) ---
     if (decision.action === 'pending_approval') {
@@ -310,7 +354,7 @@ export class EdictumOpenClawAdapter {
       if (!approvalBackend) {
         const reason = decision.reason ?? 'Approval required but no approval backend configured.'
         this._safeDeny(envelope, reason, decision.decisionSource)
-        await this._emitAuditPre(envelope, decision, AuditAction.CALL_DENIED)
+        await this._emitAuditPre(envelope, decision, AuditAction.CALL_DENIED, session)
         return reason
       }
 
@@ -330,7 +374,7 @@ export class EdictumOpenClawAdapter {
           },
         )
 
-        await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_REQUESTED)
+        await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_REQUESTED, session)
 
         const approvalDecision = await approvalBackend.waitForDecision(
           approvalRequest.approvalId,
@@ -339,20 +383,25 @@ export class EdictumOpenClawAdapter {
 
         let approved = false
         if (approvalDecision.status === ApprovalStatus.TIMEOUT) {
-          await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_TIMEOUT)
+          await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_TIMEOUT, session)
           if (decision.approvalTimeoutEffect === 'allow') {
             approved = true
           }
         } else if (!approvalDecision.approved) {
-          await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_DENIED)
+          await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_DENIED, session)
         } else {
           approved = true
-          await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_GRANTED)
+          await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_GRANTED, session)
         }
 
         if (approved) {
           this._safeAllow(envelope)
-          this._trackPending(callId, { envelope, startMs: Date.now() })
+          this._trackPending(callId, {
+            envelope,
+            startMs: Date.now(),
+            sessionId: session.sessionId,
+            workflowStageId,
+          })
           return null
         }
 
@@ -365,7 +414,7 @@ export class EdictumOpenClawAdapter {
         // Approval backend failure -> deny (not timeout — distinguish infra errors from real timeouts)
         const errorReason = 'Approval backend error'
         this._safeDeny(envelope, errorReason, decision.decisionSource)
-        await this._emitAuditPre(envelope, decision, AuditAction.CALL_DENIED)
+        await this._emitAuditPre(envelope, decision, AuditAction.CALL_DENIED, session)
         return errorReason
       }
     }
@@ -374,23 +423,33 @@ export class EdictumOpenClawAdapter {
     if (decision.action === 'deny') {
       // Observe mode: convert deny → allow with CALL_WOULD_DENY audit
       if (this._guard.mode === 'observe' || decision.observed) {
-        await this._emitAuditPre(envelope, decision, AuditAction.CALL_WOULD_DENY)
+        await this._emitAuditPre(envelope, decision, AuditAction.CALL_WOULD_DENY, session)
         this._safeAllow(envelope)
-        this._trackPending(callId, { envelope, startMs: Date.now() })
+        this._trackPending(callId, {
+          envelope,
+          startMs: Date.now(),
+          sessionId: session.sessionId,
+          workflowStageId,
+        })
         await this._emitObserveResults(envelope, decision)
         return null
       }
 
       const reason = decision.reason ?? 'Denied by contract.'
       this._safeDeny(envelope, reason, decision.decisionSource)
-      await this._emitAuditPre(envelope, decision, AuditAction.CALL_DENIED)
+      await this._emitAuditPre(envelope, decision, AuditAction.CALL_DENIED, session)
       return reason
     }
 
     // --- Allow ---
-    await this._emitAuditPre(envelope, decision, AuditAction.CALL_ALLOWED)
+    await this._emitAuditPre(envelope, decision, AuditAction.CALL_ALLOWED, session)
     this._safeAllow(envelope)
-    this._trackPending(callId, { envelope, startMs: Date.now() })
+    this._trackPending(callId, {
+      envelope,
+      startMs: Date.now(),
+      sessionId: session.sessionId,
+      workflowStageId,
+    })
 
     // Observe-mode audits — emit individual events for observe_alongside contracts
     await this._emitObserveResults(envelope, decision)
@@ -423,17 +482,21 @@ export class EdictumOpenClawAdapter {
     this._pending.delete(callId)
 
     const { envelope, startMs } = pending
+    const session = new Session(pending.sessionId, this._guard.backend)
     const durationMs = afterEvent.durationMs ?? Date.now() - startMs
     const toolSuccess = this._checkToolSuccess(afterEvent.toolName, toolResponse, afterEvent.error)
 
     const postDecision = await this._pipeline.postExecute(envelope, toolResponse, toolSuccess)
 
-    await this._session.recordExecution(envelope.toolName, toolSuccess)
+    await session.recordExecution(envelope.toolName, toolSuccess)
+    if (toolSuccess && this._workflowRuntime && pending.workflowStageId !== null) {
+      await recordWorkflowResult(this._workflowRuntime, session, pending.workflowStageId, envelope)
+    }
 
     // Emit audit
     const [attemptCount, executionCount] = await Promise.all([
-      this._session.attemptCount(),
-      this._session.executionCount(),
+      session.attemptCount(),
+      session.executionCount(),
     ])
 
     const action = toolSuccess ? AuditAction.CALL_EXECUTED : AuditAction.CALL_FAILED
@@ -798,11 +861,12 @@ export class EdictumOpenClawAdapter {
       observeResults?: Record<string, unknown>[]
     },
     action: AuditActionType,
+    session: Session,
   ): Promise<void> {
     try {
       const [attemptCount, executionCount] = await Promise.all([
-        this._session.attemptCount(),
-        this._session.executionCount(),
+        session.attemptCount(),
+        session.executionCount(),
       ])
 
       await this._guard.auditSink.emit(
@@ -836,6 +900,171 @@ export class EdictumOpenClawAdapter {
       )
     } catch {
       // Audit errors must never block tool execution
+    }
+  }
+
+  private _createSession(ctx: ToolHookContext): Session {
+    return new Session(this._resolveSessionId(ctx), this._guard.backend)
+  }
+
+  private _resolveSessionId(ctx: ToolHookContext): string {
+    return ctx.sessionId ?? ctx.sessionKey ?? this._sessionId
+  }
+
+  private _createWorkflowAuditDecision(
+    decision: NormalizedWorkflowDecision,
+  ): {
+    reason: string | null
+    decisionSource: string | null
+    decisionName: string | null
+    hooksEvaluated: Record<string, unknown>[]
+    contractsEvaluated: Record<string, unknown>[]
+    policyError: boolean
+    observeResults?: Record<string, unknown>[]
+  } {
+    return {
+      reason: decision.reason,
+      decisionSource: 'workflow',
+      decisionName: decision.stageId,
+      hooksEvaluated: [],
+      contractsEvaluated: [
+        {
+          name: decision.stageId ?? 'workflow',
+          type: 'workflow',
+          passed: decision.action === 'allow',
+          message: decision.reason,
+        },
+      ],
+      policyError: false,
+      observeResults: [],
+    }
+  }
+
+  private async _handleWorkflowApproval(
+    envelope: Readonly<ToolEnvelope>,
+    decision: NormalizedWorkflowDecision,
+    session: Session,
+    callId: string,
+  ): Promise<string | null> {
+    const approvalBackend = this._guard._approvalBackend
+
+    if (!approvalBackend) {
+      const reason = decision.reason ?? 'Workflow approval required but no approval backend configured.'
+      this._safeDeny(envelope, reason, 'workflow')
+      await this._emitAuditPre(
+        envelope,
+        this._createWorkflowAuditDecision(decision),
+        AuditAction.CALL_DENIED,
+        session,
+      )
+      return reason
+    }
+
+    try {
+      const principalDict = envelope.principal
+        ? ({ ...envelope.principal } as Record<string, unknown>)
+        : null
+
+      const approvalRequest = await approvalBackend.requestApproval(
+        envelope.toolName,
+        envelope.args as Record<string, unknown>,
+        decision.approvalMessage ?? decision.reason ?? 'Workflow approval required.',
+        {
+          timeout: decision.approvalTimeout ?? 300,
+          timeoutEffect: (decision.approvalTimeoutEffect as 'deny' | 'allow' | null) ?? 'deny',
+          principal: principalDict,
+        },
+      )
+
+      await this._emitAuditPre(
+        envelope,
+        this._createWorkflowAuditDecision(decision),
+        AuditAction.CALL_APPROVAL_REQUESTED,
+        session,
+      )
+
+      const approvalDecision = await approvalBackend.waitForDecision(
+        approvalRequest.approvalId,
+        decision.approvalTimeout ?? undefined,
+      )
+
+      let approved = false
+      if (approvalDecision.status === ApprovalStatus.TIMEOUT) {
+        await this._emitAuditPre(
+          envelope,
+          this._createWorkflowAuditDecision(decision),
+          AuditAction.CALL_APPROVAL_TIMEOUT,
+          session,
+        )
+        if (decision.approvalTimeoutEffect === 'allow') {
+          approved = true
+        }
+      } else if (!approvalDecision.approved) {
+        await this._emitAuditPre(
+          envelope,
+          this._createWorkflowAuditDecision(decision),
+          AuditAction.CALL_APPROVAL_DENIED,
+          session,
+        )
+      } else {
+        approved = true
+        await this._emitAuditPre(
+          envelope,
+          this._createWorkflowAuditDecision(decision),
+          AuditAction.CALL_APPROVAL_GRANTED,
+          session,
+        )
+      }
+
+      if (!approved) {
+        const denyReason = approvalDecision.reason ?? decision.reason ?? 'Approval denied.'
+        this._safeDeny(envelope, denyReason, 'workflow')
+        return denyReason
+      }
+
+      if (this._workflowRuntime && decision.stageId) {
+        await recordWorkflowApproval(this._workflowRuntime, session, decision.stageId)
+        const retryDecision = await evaluateWorkflow(this._workflowRuntime, session, envelope)
+        if (retryDecision.action === 'block' || retryDecision.action === 'pending_approval') {
+          const reason = retryDecision.reason ?? 'Workflow still does not allow this call.'
+          this._safeDeny(envelope, reason, 'workflow')
+          await this._emitAuditPre(
+            envelope,
+            this._createWorkflowAuditDecision(retryDecision),
+            AuditAction.CALL_DENIED,
+            session,
+          )
+          return reason
+        }
+
+        this._safeAllow(envelope)
+        this._trackPending(callId, {
+          envelope,
+          startMs: Date.now(),
+          sessionId: session.sessionId,
+          workflowStageId: retryDecision.stageId,
+        })
+        return null
+      }
+
+      this._safeAllow(envelope)
+      this._trackPending(callId, {
+        envelope,
+        startMs: Date.now(),
+        sessionId: session.sessionId,
+        workflowStageId: decision.stageId,
+      })
+      return null
+    } catch {
+      const reason = 'Approval backend error'
+      this._safeDeny(envelope, reason, 'workflow')
+      await this._emitAuditPre(
+        envelope,
+        this._createWorkflowAuditDecision(decision),
+        AuditAction.CALL_DENIED,
+        session,
+      )
+      return reason
     }
   }
 }

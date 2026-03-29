@@ -12,7 +12,7 @@ import type {
 } from './types.js'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { isWorkflowTestMode, loadWorkflowRuntime } from './workflow-compat.js'
+import { loadWorkflowRuntime } from './workflow-compat.js'
 import type { WorkflowCoreModuleLike, WorkflowRuntimeLike } from './workflow-compat.js'
 import type * as EdictumServerModule from '@edictum/server'
 
@@ -201,9 +201,9 @@ async function initWorkflowAdapter(
       approvalBackend: new ServerApprovalBackend(client),
       auditSink: new ServerAuditSink(client),
     }
-  } else if (!isWorkflowTestMode()) {
+  } else {
     throw new Error(
-      'workflowPath requires serverUrl and apiKey for persistent Mimi/OpenClaw workflow state. MemoryBackend is test-only for workflow-enabled runs.',
+      'workflowPath requires serverUrl and apiKey for persistent Mimi/OpenClaw workflow state.',
     )
   }
 

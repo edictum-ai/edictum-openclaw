@@ -48,7 +48,8 @@ export function hasNativeWorkflowSupport(guard: unknown): boolean {
     return false
   }
   const candidate = guard as Record<string, unknown>
-  return '_workflowRuntime' in candidate || 'workflowRuntime' in candidate
+  const runtime = candidate['_workflowRuntime'] ?? candidate['workflowRuntime']
+  return runtime != null
 }
 
 export function loadWorkflowRuntime(
@@ -163,10 +164,6 @@ function extractWorkflowApprovalTimeoutEffect(value: WorkflowDecisionLike): stri
     return value.workflow.approvalTimeoutEffect
   }
   return null
-}
-
-export function isWorkflowTestMode(): boolean {
-  return process.env.EDICTUM_WORKFLOW_TEST_MODE === 'true'
 }
 
 function normalizeWorkflowAction(action: unknown): NormalizedWorkflowDecision['action'] {

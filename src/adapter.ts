@@ -330,6 +330,14 @@ export class EdictumOpenClawAdapter {
         if (reason !== null) {
           return reason
         }
+        this._safeAllow(envelope)
+        this._trackPending(callId, {
+          envelope,
+          startMs: Date.now(),
+          sessionId: session.sessionId,
+          workflowStageId: null,
+        })
+        return null
       }
 
       if (workflowDecision.action === 'pending_approval') {
@@ -491,7 +499,11 @@ export class EdictumOpenClawAdapter {
 
     await session.recordExecution(envelope.toolName, toolSuccess)
     if (toolSuccess && this._workflowRuntime && pending.workflowStageId !== null) {
-      await recordWorkflowResult(this._workflowRuntime, session, pending.workflowStageId, envelope)
+      try {
+        await recordWorkflowResult(this._workflowRuntime, session, pending.workflowStageId, envelope)
+      } catch {
+        // Workflow persistence errors must not disrupt post-execution auditing.
+      }
     }
 
     // Emit audit

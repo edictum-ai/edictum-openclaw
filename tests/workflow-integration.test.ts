@@ -328,6 +328,7 @@ describe('workflow integration', () => {
 
     expect(result).toBeUndefined()
     expect(sink.events.some((event) => event.action === 'call_would_deny')).toBe(true)
+    expect(sink.events.some((event) => event.action === 'call_allowed')).toBe(false)
 
     await handlers['after_tool_call'].handler(
       makeAfterEvent({

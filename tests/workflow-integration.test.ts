@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { CollectingAuditSink, Edictum, MemoryBackend } from '@edictum/core'
+import {
+  ApprovalStatus,
+  CollectingAuditSink,
+  Edictum,
+  MemoryBackend,
+  createCompiledState,
+} from '@edictum/core'
+import type { ApprovalBackend } from '@edictum/core'
 import type { Session, ToolEnvelope } from '@edictum/core'
 
 import { createEdictumPlugin } from '../src/plugin.js'
@@ -278,5 +285,128 @@ describe('workflow integration', () => {
       }),
     )
     expect(otherSessionBlocked).toEqual({ block: true, blockReason: 'Read the spec first' })
+  })
+
+  it('allows workflow-blocked calls through in observe mode and audits them as would-deny', async () => {
+    const runtime = new FakeWorkflowRuntime(backend)
+    const sink = new CollectingAuditSink()
+    const handlers: Record<
+      string,
+      { handler: (...args: unknown[]) => unknown; opts?: { priority?: number } }
+    > = {}
+
+    const plugin = createEdictumPlugin(
+      new Edictum({
+        backend,
+        auditSink: sink,
+        mode: 'observe',
+      }),
+      { workflowRuntime: runtime },
+    )
+
+    const api: OpenClawPluginApi = {
+      id: 'edictum',
+      name: 'Edictum',
+      config: {},
+      on: vi.fn(
+        (
+          hookName: string,
+          handler: (...args: unknown[]) => unknown,
+          opts?: { priority?: number },
+        ) => {
+          handlers[hookName] = { handler, opts }
+        },
+      ),
+    }
+
+    plugin.register(api)
+
+    const result = await handlers['before_tool_call'].handler(
+      makeEditEvent({ toolCallId: 'tc-observe-workflow' }),
+      makeCtx({ toolName: 'Edit', toolCallId: 'tc-observe-workflow' }),
+    )
+
+    expect(result).toBeUndefined()
+    expect(sink.events.some((event) => event.action === 'call_would_deny')).toBe(true)
+  })
+
+  it('evaluates workflow sequencing before contract HITL approval', async () => {
+    const sink = new CollectingAuditSink()
+    const approvalBackend: ApprovalBackend = {
+      requestApproval: vi.fn(async (_toolName, _toolArgs, _message, _opts) => ({
+        approvalId: 'mock-approval-1',
+        toolName: _toolName,
+        toolArgs: Object.freeze({ ..._toolArgs }),
+        message: _message,
+        timeout: _opts?.timeout ?? 300,
+        timeoutEffect: _opts?.timeoutEffect ?? 'deny',
+        principal: _opts?.principal ?? null,
+        metadata: Object.freeze({}),
+        createdAt: new Date(),
+      })),
+      waitForDecision: vi.fn(async () => ({
+        approved: true,
+        approver: 'workflow-reviewer',
+        reason: null,
+        status: ApprovalStatus.APPROVED,
+        timestamp: new Date(),
+      })),
+    }
+
+    const guard = new Edictum({
+      backend,
+      auditSink: sink,
+      approvalBackend,
+    })
+
+    guard._replaceState(
+      createCompiledState({
+        preconditions: [
+          {
+            type: 'precondition',
+            name: 'require-approval',
+            tool: 'Edit',
+            effect: 'approve',
+            check: () => ({
+              passed: false,
+              message: 'Needs approval',
+              metadata: Object.freeze({}),
+            }),
+          },
+        ],
+      }),
+    )
+
+    const handlers: Record<
+      string,
+      { handler: (...args: unknown[]) => unknown; opts?: { priority?: number } }
+    > = {}
+    const plugin = createEdictumPlugin(guard, {
+      workflowRuntime: new FakeWorkflowRuntime(backend),
+    })
+    const api: OpenClawPluginApi = {
+      id: 'edictum',
+      name: 'Edictum',
+      config: {},
+      on: vi.fn(
+        (
+          hookName: string,
+          handler: (...args: unknown[]) => unknown,
+          opts?: { priority?: number },
+        ) => {
+          handlers[hookName] = { handler, opts }
+        },
+      ),
+    }
+    plugin.register(api)
+
+    const result = await handlers['before_tool_call'].handler(
+      makeEditEvent({ toolCallId: 'tc-workflow-before-hitl' }),
+      makeCtx({ toolName: 'Edit', toolCallId: 'tc-workflow-before-hitl' }),
+    )
+
+    expect(result).toEqual({ block: true, blockReason: 'Read the spec first' })
+    expect(approvalBackend.requestApproval).not.toHaveBeenCalled()
+    expect(approvalBackend.waitForDecision).not.toHaveBeenCalled()
   })
 })

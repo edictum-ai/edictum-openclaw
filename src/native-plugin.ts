@@ -13,10 +13,15 @@ import type {
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isWorkflowTestMode, loadWorkflowRuntime } from './workflow-compat.js'
-import type { WorkflowCoreModuleLike } from './workflow-compat.js'
+import type { WorkflowCoreModuleLike, WorkflowRuntimeLike } from './workflow-compat.js'
+import type * as EdictumServerModule from '@edictum/server'
 
 type PluginConfig = EdictumNativePluginConfig
 type GuardInstance = InstanceType<typeof EdictumCore.Edictum>
+type GuardFromYamlCompatOptions = NonNullable<Parameters<typeof EdictumCore.Edictum.fromYaml>[1]> & {
+  workflowRuntime?: WorkflowRuntimeLike
+}
+type ServerModuleLike = typeof EdictumServerModule
 
 // Resolve __dirname for both ESM and CJS contexts
 const currentDir =
@@ -99,8 +104,8 @@ const configSchema = {
 async function loadServerModule(
   message: string,
   log?: PluginLogger,
-): Promise<Record<string, unknown>> {
-  let serverModule: Record<string, unknown>
+): Promise<ServerModuleLike> {
+  let serverModule: ServerModuleLike
   try {
     serverModule = await import('@edictum/server')
   } catch (err) {
@@ -156,7 +161,7 @@ async function initWorkflowAdapter(
     EdictumCore as unknown as WorkflowCoreModuleLike,
     workflowPath,
   )
-  const guardOptions: Record<string, unknown> = {
+  let guardOptions: GuardFromYamlCompatOptions = {
     mode,
     workflowRuntime,
   }
@@ -171,7 +176,7 @@ async function initWorkflowAdapter(
       ServerApprovalBackend,
       ServerAuditSink,
       ServerBackend,
-    } = serverModule as Record<string, new (...args: unknown[]) => unknown>
+    } = serverModule
 
     if (
       typeof EdictumServerClient !== 'function' ||
@@ -190,19 +195,23 @@ async function initWorkflowAdapter(
       agentId: config.agentId ?? 'openclaw',
     })
 
-    guardOptions['backend'] = new ServerBackend(client)
-    guardOptions['approvalBackend'] = new ServerApprovalBackend(client)
-    guardOptions['auditSink'] = new ServerAuditSink(client)
+    guardOptions = {
+      ...guardOptions,
+      backend: new ServerBackend(client),
+      approvalBackend: new ServerApprovalBackend(client),
+      auditSink: new ServerAuditSink(client),
+    }
   } else if (!isWorkflowTestMode()) {
     throw new Error(
       'workflowPath requires serverUrl and apiKey for persistent Mimi/OpenClaw workflow state. MemoryBackend is test-only for workflow-enabled runs.',
     )
   }
 
-  const guard = EdictumCore.Edictum.fromYaml(
-    contractsPath,
-    guardOptions as never,
-  ) as unknown as GuardInstance
+  const fromYamlWithWorkflow = EdictumCore.Edictum.fromYaml as unknown as (
+    path: string,
+    options?: GuardFromYamlCompatOptions,
+  ) => GuardInstance
+  const guard = fromYamlWithWorkflow(contractsPath, guardOptions)
 
   log?.info(`loaded workflow ${workflowPath} with contracts ${contractsPath} in ${mode} mode`)
   return new EdictumOpenClawAdapter(guard, { workflowRuntime })

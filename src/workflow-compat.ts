@@ -30,9 +30,9 @@ export interface NormalizedWorkflowDecision {
 }
 
 export interface WorkflowRuntimeLike {
-  evaluate: (...args: unknown[]) => Promise<WorkflowDecisionLike>
-  recordResult?: (...args: unknown[]) => Promise<unknown>
-  recordApproval?: (...args: unknown[]) => Promise<unknown>
+  evaluate: (session: Session, envelope: ToolEnvelope) => Promise<WorkflowDecisionLike>
+  recordResult?: (session: Session, stageId: string, envelope: ToolEnvelope) => Promise<unknown>
+  recordApproval?: (session: Session, stageId: string) => Promise<unknown>
 }
 
 export interface WorkflowCoreModuleLike {
@@ -69,14 +69,15 @@ export async function evaluateWorkflow(
   session: Session,
   envelope: ToolEnvelope,
 ): Promise<NormalizedWorkflowDecision> {
-  const raw =
-    runtime.evaluate.length >= 3
-      ? await runtime.evaluate(undefined, session, envelope)
-      : await runtime.evaluate(session, envelope)
+  const raw = await runtime.evaluate(session, envelope)
+  const action = normalizeWorkflowAction(raw.action)
 
   return {
-    action: raw.action,
-    reason: raw.reason ?? null,
+    action,
+    reason:
+      action === 'block' && raw.reason == null
+        ? `Workflow runtime returned unsupported action ${JSON.stringify(raw.action)}`
+        : raw.reason ?? null,
     stageId: extractWorkflowStageId(raw),
     approvalMessage: extractWorkflowApprovalMessage(raw),
     approvalTimeout: extractWorkflowApprovalTimeout(raw),
@@ -93,10 +94,6 @@ export async function recordWorkflowResult(
   if (!stageId || typeof runtime.recordResult !== 'function') {
     return
   }
-  if (runtime.recordResult.length >= 4) {
-    await runtime.recordResult(undefined, session, stageId, envelope)
-    return
-  }
   await runtime.recordResult(session, stageId, envelope)
 }
 
@@ -106,10 +103,6 @@ export async function recordWorkflowApproval(
   stageId: string,
 ): Promise<void> {
   if (!stageId || typeof runtime.recordApproval !== 'function') {
-    return
-  }
-  if (runtime.recordApproval.length >= 3) {
-    await runtime.recordApproval(undefined, session, stageId)
     return
   }
   await runtime.recordApproval(session, stageId)
@@ -173,5 +166,12 @@ function extractWorkflowApprovalTimeoutEffect(value: WorkflowDecisionLike): stri
 }
 
 export function isWorkflowTestMode(): boolean {
-  return process.env.NODE_ENV === 'test' || process.env.VITEST === 'true'
+  return process.env.VITEST === 'true'
+}
+
+function normalizeWorkflowAction(action: unknown): NormalizedWorkflowDecision['action'] {
+  if (action === 'allow' || action === 'block' || action === 'pending_approval') {
+    return action
+  }
+  return 'block'
 }

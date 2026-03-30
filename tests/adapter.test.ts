@@ -409,6 +409,22 @@ describe('EdictumOpenClawAdapter', () => {
       expect(denied!.callId).toBe('tc-sec-pr-audit')
     })
 
+    it('invalid ctx.sessionId denies instead of throwing and emits audit', async () => {
+      const guard = new Edictum({ auditSink: sink })
+      const adapter = new EdictumOpenClawAdapter(guard)
+      const ctx = makeCtx({ sessionId: 'bad\x00session' })
+
+      const result = await adapter.pre('exec', { command: 'ls' }, 'tc-sec-invalid-session', ctx)
+
+      expect(result).toBe('Invalid sessionId')
+      const denied = sink.events.find(
+        (e) => e.action === AuditAction.CALL_DENIED && e.reason === 'Invalid sessionId',
+      )
+      expect(denied).toBeDefined()
+      expect(denied!.toolName).toBe('exec')
+      expect(denied!.callId).toBe('tc-sec-invalid-session')
+    })
+
     it('already-consumed callId (replay) returns passthrough from post()', async () => {
       const guard = new Edictum({ auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard)

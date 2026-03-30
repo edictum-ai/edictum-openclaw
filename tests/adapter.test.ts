@@ -8,11 +8,11 @@ import {
   createCompiledState,
   EdictumConfigError,
 } from '@edictum/core'
-import type { ApprovalBackend, Precondition, Postcondition, Verdict } from '@edictum/core'
+import type { ApprovalBackend, Precondition, Postcondition } from '@edictum/core'
 
 import { EdictumOpenClawAdapter } from '../src/adapter.js'
 import { createEdictumPlugin, defaultPrincipalFromContext } from '../src/plugin.js'
-import { buildFindings, summarizeResult } from '../src/helpers.js'
+import { buildViolations, summarizeResult } from '../src/helpers.js'
 import type {
   ToolHookContext,
   BeforeToolCallEvent,
@@ -94,7 +94,7 @@ describe('EdictumOpenClawAdapter', () => {
 
   describe('pre-execution', () => {
     it('allows safe tool calls', async () => {
-      const guard = new Edictum({ contracts: [noRm], auditSink: sink })
+      const guard = new Edictum({ rules: [noRm], auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard)
       const ctx = makeCtx()
 
@@ -104,7 +104,7 @@ describe('EdictumOpenClawAdapter', () => {
     })
 
     it('denies dangerous tool calls', async () => {
-      const guard = new Edictum({ contracts: [noRm], auditSink: sink })
+      const guard = new Edictum({ rules: [noRm], auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard)
       const ctx = makeCtx()
 
@@ -114,7 +114,7 @@ describe('EdictumOpenClawAdapter', () => {
     })
 
     it('emits CALL_DENIED audit event on deny', async () => {
-      const guard = new Edictum({ contracts: [noRm], auditSink: sink })
+      const guard = new Edictum({ rules: [noRm], auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard)
       const ctx = makeCtx()
 
@@ -127,7 +127,7 @@ describe('EdictumOpenClawAdapter', () => {
     })
 
     it('emits CALL_ALLOWED audit event on allow', async () => {
-      const guard = new Edictum({ contracts: [noRm], auditSink: sink })
+      const guard = new Edictum({ rules: [noRm], auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard)
       const ctx = makeCtx()
 
@@ -141,7 +141,7 @@ describe('EdictumOpenClawAdapter', () => {
   describe('observe mode', () => {
     it('converts deny to allow with CALL_WOULD_DENY audit', async () => {
       const guard = new Edictum({
-        contracts: [noRm],
+        rules: [noRm],
         auditSink: sink,
         mode: 'observe',
       })
@@ -159,9 +159,9 @@ describe('EdictumOpenClawAdapter', () => {
   })
 
   describe('post-execution', () => {
-    it('returns findings on postcondition failure', async () => {
+    it('returns violations on postcondition failure', async () => {
       const guard = new Edictum({
-        contracts: [detectSecrets],
+        rules: [detectSecrets],
         auditSink: sink,
       })
       const adapter = new EdictumOpenClawAdapter(guard)
@@ -178,7 +178,7 @@ describe('EdictumOpenClawAdapter', () => {
       )
 
       expect(postResult.postconditionsPassed).toBe(false)
-      expect(postResult.findings.length).toBeGreaterThan(0)
+      expect(postResult.violations.length).toBeGreaterThan(0)
     })
 
     it('handles unknown callId gracefully', async () => {
@@ -192,13 +192,13 @@ describe('EdictumOpenClawAdapter', () => {
       )
 
       expect(postResult.postconditionsPassed).toBe(true)
-      expect(postResult.findings).toEqual([])
+      expect(postResult.violations).toEqual([])
     })
   })
 
   describe('hook handlers', () => {
     it('handleBeforeToolCall returns block on deny', async () => {
-      const guard = new Edictum({ contracts: [noRm], auditSink: sink })
+      const guard = new Edictum({ rules: [noRm], auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard)
       const event = makeEvent({ params: { command: 'rm -rf /' } })
       const ctx = makeCtx()
@@ -211,7 +211,7 @@ describe('EdictumOpenClawAdapter', () => {
     })
 
     it('handleBeforeToolCall returns undefined on allow', async () => {
-      const guard = new Edictum({ contracts: [noRm], auditSink: sink })
+      const guard = new Edictum({ rules: [noRm], auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard)
       const event = makeEvent({ params: { command: 'ls' } })
       const ctx = makeCtx()
@@ -240,7 +240,7 @@ describe('EdictumOpenClawAdapter', () => {
   describe('callbacks', () => {
     it('calls onDeny callback on denial', async () => {
       const onDeny = vi.fn()
-      const guard = new Edictum({ contracts: [noRm], auditSink: sink })
+      const guard = new Edictum({ rules: [noRm], auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard, { onDeny })
       const ctx = makeCtx()
 
@@ -252,7 +252,7 @@ describe('EdictumOpenClawAdapter', () => {
 
     it('calls onAllow callback on allow', async () => {
       const onAllow = vi.fn()
-      const guard = new Edictum({ contracts: [noRm], auditSink: sink })
+      const guard = new Edictum({ rules: [noRm], auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard, { onAllow })
       const ctx = makeCtx()
 
@@ -265,7 +265,7 @@ describe('EdictumOpenClawAdapter', () => {
       const onDeny = vi.fn(() => {
         throw new Error('callback exploded')
       })
-      const guard = new Edictum({ contracts: [noRm], auditSink: sink })
+      const guard = new Edictum({ rules: [noRm], auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard, { onDeny })
       const ctx = makeCtx()
 
@@ -333,7 +333,7 @@ describe('EdictumOpenClawAdapter', () => {
 
   describe('session tracking', () => {
     it('increments attempt count on every pre call', async () => {
-      const guard = new Edictum({ contracts: [noRm], auditSink: sink })
+      const guard = new Edictum({ rules: [noRm], auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard)
       const ctx = makeCtx()
 
@@ -451,7 +451,7 @@ describe('EdictumOpenClawAdapter', () => {
       // Must return passthrough (no pending entry)
       expect(replay.result).toBe('replayed result')
       expect(replay.postconditionsPassed).toBe(true)
-      expect(replay.findings).toEqual([])
+      expect(replay.violations).toEqual([])
       expect(replay.outputSuppressed).toBe(false)
     })
 
@@ -636,13 +636,13 @@ describe('EdictumOpenClawAdapter', () => {
       expect(adapter.sessionId).toBe('custom-session-id')
     })
 
-    it('onPostconditionWarn callback is called when postcondition fails', async () => {
-      const onPostconditionWarn = vi.fn()
+    it('onViolation callback is called when a postcondition fails', async () => {
+      const onViolation = vi.fn()
       const guard = new Edictum({
-        contracts: [detectSecrets],
+        rules: [detectSecrets],
         auditSink: sink,
       })
-      const adapter = new EdictumOpenClawAdapter(guard, { onPostconditionWarn })
+      const adapter = new EdictumOpenClawAdapter(guard, { onViolation })
       const ctx = makeCtx()
 
       // Pre-execute to register pending
@@ -655,9 +655,9 @@ describe('EdictumOpenClawAdapter', () => {
         makeAfterEvent({ toolCallId: 'tc-beh-pw', result: 'config: sk-secret-key-12345' }),
       )
 
-      expect(onPostconditionWarn).toHaveBeenCalledOnce()
-      const [, findings] = onPostconditionWarn.mock.calls[0]
-      expect(findings.length).toBeGreaterThan(0)
+      expect(onViolation).toHaveBeenCalledOnce()
+      const [, violations] = onViolation.mock.calls[0]
+      expect(violations.length).toBeGreaterThan(0)
     })
   })
 
@@ -861,7 +861,7 @@ describe('EdictumOpenClawAdapter', () => {
   describe('ambiguous same-name call correlation', () => {
     it('skips postcondition when two same-name calls pending and no toolCallId', async () => {
       const guard = new Edictum({
-        contracts: [detectSecrets],
+        rules: [detectSecrets],
         auditSink: sink,
       })
       const adapter = new EdictumOpenClawAdapter(guard)
@@ -893,7 +893,7 @@ describe('EdictumOpenClawAdapter', () => {
 
     it('correlates correctly when only one same-name call pending and no toolCallId', async () => {
       const guard = new Edictum({
-        contracts: [detectSecrets],
+        rules: [detectSecrets],
         auditSink: sink,
       })
       const adapter = new EdictumOpenClawAdapter(guard)
@@ -920,7 +920,7 @@ describe('EdictumOpenClawAdapter', () => {
 
     it('correlates correctly with explicit toolCallId even when ambiguous', async () => {
       const guard = new Edictum({
-        contracts: [detectSecrets],
+        rules: [detectSecrets],
         auditSink: sink,
       })
       const adapter = new EdictumOpenClawAdapter(guard)
@@ -1062,7 +1062,7 @@ describe('EdictumOpenClawAdapter', () => {
           return { passed: true, message: null, metadata: Object.freeze({}) }
         },
       }
-      const guard = new Edictum({ contracts: [warnOnly], auditSink: sink })
+      const guard = new Edictum({ rules: [warnOnly], auditSink: sink })
       const adapter = new EdictumOpenClawAdapter(guard)
       const ctx = makeCtx()
 
@@ -1084,12 +1084,12 @@ describe('EdictumOpenClawAdapter', () => {
   })
 
   // -------------------------------------------------------------------------
-  // #6 — buildFindings field mapping bug
+  // #6 — buildViolations field mapping bug
   // -------------------------------------------------------------------------
 
-  describe('buildFindings field mapping (#6)', () => {
-    it('maps pipeline field names correctly (name → contractId, metadata.tags → tags)', () => {
-      const findings = buildFindings({
+  describe('buildViolations field mapping (#6)', () => {
+    it('maps pipeline field names correctly (name → ruleId, metadata.tags → metadata.tags)', () => {
+      const violations = buildViolations({
         postconditionsPassed: false,
         warnings: [],
         contractsEvaluated: [
@@ -1104,13 +1104,13 @@ describe('EdictumOpenClawAdapter', () => {
         policyError: false,
       })
 
-      expect(findings).toHaveLength(1)
-      expect(findings[0].contractId).toBe('secret-leak')
-      expect(findings[0].tags).toEqual(['dlp', 'security'])
+      expect(violations).toHaveLength(1)
+      expect(violations[0].ruleId).toBe('secret-leak')
+      expect(violations[0].metadata.tags).toEqual(['dlp', 'security'])
     })
 
     it('falls back to contractId when name is absent', () => {
-      const findings = buildFindings({
+      const violations = buildViolations({
         postconditionsPassed: false,
         warnings: [],
         contractsEvaluated: [
@@ -1124,11 +1124,11 @@ describe('EdictumOpenClawAdapter', () => {
         policyError: false,
       })
 
-      expect(findings[0].contractId).toBe('legacy-id')
+      expect(violations[0].ruleId).toBe('legacy-id')
     })
 
     it('falls back to top-level tags when metadata.tags is absent', () => {
-      const findings = buildFindings({
+      const violations = buildViolations({
         postconditionsPassed: false,
         warnings: [],
         contractsEvaluated: [
@@ -1143,7 +1143,7 @@ describe('EdictumOpenClawAdapter', () => {
         policyError: false,
       })
 
-      expect(findings[0].tags).toEqual(['fallback-tag'])
+      expect(violations[0].metadata.tags).toEqual(['fallback-tag'])
     })
   })
 

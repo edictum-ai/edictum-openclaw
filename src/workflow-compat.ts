@@ -1,5 +1,5 @@
 import { EdictumConfigError } from '@edictum/core'
-import type { Session, ToolEnvelope } from '@edictum/core'
+import type { Session, ToolCall } from '@edictum/core'
 
 export interface WorkflowDecisionLike {
   readonly action: 'allow' | 'block' | 'pending_approval'
@@ -30,8 +30,8 @@ export interface NormalizedWorkflowDecision {
 }
 
 export interface WorkflowRuntimeLike {
-  evaluate: (session: Session, envelope: ToolEnvelope) => Promise<WorkflowDecisionLike>
-  recordResult?: (session: Session, stageId: string, envelope: ToolEnvelope) => Promise<unknown>
+  evaluate: (session: Session, toolCall: ToolCall) => Promise<WorkflowDecisionLike>
+  recordResult?: (session: Session, stageId: string, toolCall: ToolCall) => Promise<unknown>
   recordApproval?: (session: Session, stageId: string) => Promise<unknown>
 }
 
@@ -68,9 +68,9 @@ export function loadWorkflowRuntime(
 export async function evaluateWorkflow(
   runtime: WorkflowRuntimeLike,
   session: Session,
-  envelope: ToolEnvelope,
+  toolCall: ToolCall,
 ): Promise<NormalizedWorkflowDecision> {
-  const raw = await runtime.evaluate(session, envelope)
+  const raw = await runtime.evaluate(session, toolCall)
   const action = normalizeWorkflowAction(raw.action)
 
   return {
@@ -90,12 +90,12 @@ export async function recordWorkflowResult(
   runtime: WorkflowRuntimeLike,
   session: Session,
   stageId: string,
-  envelope: ToolEnvelope,
+  toolCall: ToolCall,
 ): Promise<void> {
   if (!stageId || typeof runtime.recordResult !== 'function') {
     return
   }
-  await runtime.recordResult(session, stageId, envelope)
+  await runtime.recordResult(session, stageId, toolCall)
 }
 
 export async function recordWorkflowApproval(

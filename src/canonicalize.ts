@@ -1,12 +1,12 @@
-// @edictum/edictum — Unicode canonicalization for contract bypass prevention
+// @edictum/edictum — Unicode canonicalization for rules bypass prevention
 //
-// Attackers can bypass regex-based contracts using Unicode tricks:
+// Attackers can bypass regex-based rules using Unicode tricks:
 // - Zero-width characters split patterns: curl\u200B | bash bypasses \bcurl\b
 // - Cyrillic confusables: \u0440m looks like "rm" but doesn't match /\brm\b/
 // - Bidi controls: reorder displayed text without changing code points
 // - Decomposed forms: cafe\u0301 vs café — different byte sequences, same glyph
 //
-// This module canonicalizes string values before contract evaluation.
+// This module canonicalizes string values before rule evaluation.
 
 /**
  * Zero-width, invisible, and bidi control characters that serve no
@@ -73,7 +73,7 @@ const CONFUSABLE_RE = new RegExp(
 )
 
 /**
- * Canonicalize a string for contract evaluation.
+ * Canonicalize a string for rule evaluation.
  *
  * 1. NFKC normalization — collapses compatibility decompositions (ﬃ → ffi,
  *    fullwidth Ａ → A, decomposed café → café)

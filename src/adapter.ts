@@ -1,19 +1,19 @@
-// @edictum/edictum — OpenClaw adapter for edictum
-// Translates between OpenClaw plugin hooks and Edictum's GovernancePipeline.
+// @edictum/edictum — OpenClaw adapter for Edictum
+// Translates between OpenClaw plugin hooks and Edictum's CheckPipeline.
 // NOTE: 500+ lines — approved due to adapter pattern requiring single-class cohesion (matches vercel-ai/claude-sdk)
 
 // Node global — project omits @types/node; only used for eviction warning.
 declare const console: { warn(...args: unknown[]): void }
 
-import type { Principal, ToolEnvelope, AuditAction as AuditActionType } from '@edictum/core'
+import type { Principal, ToolCall, AuditAction as AuditActionType } from '@edictum/core'
 import {
   ApprovalStatus,
   AuditAction,
+  CheckPipeline,
   createAuditEvent,
   createEnvelope,
   defaultSuccessCheck,
   EdictumConfigError,
-  GovernancePipeline,
   Session,
 } from '@edictum/core'
 import type { Edictum } from '@edictum/core'
@@ -31,11 +31,11 @@ import type {
   AfterToolCallEvent,
   BeforeToolCallEvent,
   BeforeToolCallResult,
-  Finding,
   PostCallResult,
   ToolHookContext,
+  Violation,
 } from './types.js'
-import { buildFindings, summarizeResult } from './helpers.js'
+import { buildViolations, summarizeResult } from './helpers.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -56,9 +56,9 @@ const MAX_PENDING = 10_000
 //   path, file_path, filePath, file
 // (See CLAUDE_PARAM_GROUPS in openclaw/dist/plugin-sdk/src/agents/pi-tools.params.d.ts)
 //
-// Contracts only check args.path (the canonical name). Without normalization,
-// a tool call using args.file bypasses every path-based contract — a complete
-// governance bypass for read-protection, credential guards, etc.
+// Rules only check args.path (the canonical name). Without normalization,
+// a tool call using args.file bypasses every path-based rule — a complete
+// rules bypass for read-protection, credential guards, etc.
 //
 // This map defines { canonical: aliases[] }. The adapter copies the first
 // matching alias to the canonical key before creating the envelope. The
@@ -102,23 +102,23 @@ export interface OpenClawAdapterOptions {
     ctx: ToolHookContext,
   ) => Principal
 
-  /** Called on every denial. Errors are silently caught. */
+  /** Called on every blocked call. Errors are silently caught. */
   readonly onDeny?: (
-    envelope: Readonly<ToolEnvelope>,
+    toolCall: Readonly<ToolCall>,
     reason: string,
     source: string | null,
   ) => void
 
   /** Called on every allow. Errors are silently caught. */
-  readonly onAllow?: (envelope: Readonly<ToolEnvelope>) => void
+  readonly onAllow?: (toolCall: Readonly<ToolCall>) => void
 
   /**
-   * Called when a postcondition produces findings.
+   * Called when output checks produce violations.
    * Errors are silently caught.
    */
-  readonly onPostconditionWarn?: (
-    envelope: Readonly<ToolEnvelope>,
-    findings: readonly Finding[],
+  readonly onViolation?: (
+    toolCall: Readonly<ToolCall>,
+    violations: readonly Violation[],
   ) => void
 
   /**
@@ -133,7 +133,7 @@ export interface OpenClawAdapterOptions {
 // ---------------------------------------------------------------------------
 
 interface PendingCall {
-  readonly envelope: Readonly<ToolEnvelope>
+  readonly toolCall: Readonly<ToolCall>
   readonly startMs: number
   readonly sessionId: string
   readonly workflowStageId: string | null
@@ -152,7 +152,7 @@ interface WorkflowApprovalOutcome {
 
 export class EdictumOpenClawAdapter {
   private readonly _guard: Edictum
-  private readonly _pipeline: GovernancePipeline
+  private readonly _pipeline: CheckPipeline
   private readonly _sessionId: string
   private readonly _workflowRuntime: WorkflowRuntimeLike | null
   private readonly _workflowHandledNatively: boolean
@@ -170,17 +170,17 @@ export class EdictumOpenClawAdapter {
     | ((toolName: string, toolInput: Record<string, unknown>, ctx: ToolHookContext) => Principal)
     | null
   private readonly _onDeny:
-    | ((envelope: Readonly<ToolEnvelope>, reason: string, source: string | null) => void)
+    | ((toolCall: Readonly<ToolCall>, reason: string, source: string | null) => void)
     | null
-  private readonly _onAllow: ((envelope: Readonly<ToolEnvelope>) => void) | null
-  private readonly _onPostconditionWarn:
-    | ((envelope: Readonly<ToolEnvelope>, findings: readonly Finding[]) => void)
+  private readonly _onAllow: ((toolCall: Readonly<ToolCall>) => void) | null
+  private readonly _onViolation:
+    | ((toolCall: Readonly<ToolCall>, violations: readonly Violation[]) => void)
     | null
   private readonly _successCheck: ((toolName: string, result: unknown) => boolean) | null
 
   constructor(guard: Edictum, options: OpenClawAdapterOptions = {}) {
     this._guard = guard
-    this._pipeline = new GovernancePipeline(guard)
+    this._pipeline = new CheckPipeline(guard)
 
     this._sessionId = this._validateSessionId(options.sessionId ?? guard.sessionId)
     this._workflowRuntime = options.workflowRuntime ?? null
@@ -190,7 +190,7 @@ export class EdictumOpenClawAdapter {
     this._principalResolver = options.principalResolver ?? null
     this._onDeny = options.onDeny ?? null
     this._onAllow = options.onAllow ?? null
-    this._onPostconditionWarn = options.onPostconditionWarn ?? null
+    this._onViolation = options.onViolation ?? null
     this._successCheck = options.successCheck ?? null
   }
 
@@ -298,9 +298,9 @@ export class EdictumOpenClawAdapter {
       return 'Principal resolution failed'
     }
     const principal = principalResult.value
-    let envelope: ReturnType<typeof createEnvelope>
+    let toolCall: ReturnType<typeof createEnvelope>
     try {
-      envelope = createEnvelope(toolName, toolInput, {
+      toolCall = createEnvelope(toolName, toolInput, {
         callId,
         runId: ctx.runId ?? this._sessionId,
         callIndex: this._callIndex++,
@@ -337,7 +337,7 @@ export class EdictumOpenClawAdapter {
     }
 
     await session.incrementAttempts()
-    const decision = await this._pipeline.preExecute(envelope, session)
+    const decision = await this._pipeline.preExecute(toolCall, session)
     let workflowStageId = extractWorkflowStageId(decision)
     let workflowApprovalStageId: string | null = null
 
@@ -347,15 +347,15 @@ export class EdictumOpenClawAdapter {
       (decision.action === 'allow' || decision.action === 'pending_approval') &&
       workflowStageId === null
     ) {
-      const workflowDecision = await evaluateWorkflow(this._workflowRuntime, session, envelope)
+      const workflowDecision = await evaluateWorkflow(this._workflowRuntime, session, toolCall)
       if (workflowDecision.action === 'block') {
-        const reason = await this._handleWorkflowBlock(envelope, workflowDecision, session)
+        const reason = await this._handleWorkflowBlock(toolCall, workflowDecision, session)
         if (reason !== null) {
           return reason
         }
-        this._safeAllow(envelope)
+        this._safeAllow(toolCall)
         this._trackPending(callId, {
-          envelope,
+          toolCall,
           startMs: Date.now(),
           sessionId: session.sessionId,
           workflowStageId: null,
@@ -365,7 +365,7 @@ export class EdictumOpenClawAdapter {
 
       if (workflowDecision.action === 'pending_approval') {
         const workflowApproval = await this._satisfyWorkflowApproval(
-          envelope,
+          toolCall,
           workflowDecision,
           session,
         )
@@ -373,9 +373,9 @@ export class EdictumOpenClawAdapter {
           return workflowApproval.reason ?? 'Approval denied.'
         }
         if (workflowApproval.observed) {
-          this._safeAllow(envelope)
+          this._safeAllow(toolCall)
           this._trackPending(callId, {
-            envelope,
+            toolCall,
             startMs: Date.now(),
             sessionId: session.sessionId,
             workflowStageId: null,
@@ -396,19 +396,19 @@ export class EdictumOpenClawAdapter {
 
       if (!approvalBackend) {
         const reason = decision.reason ?? 'Approval required but no approval backend configured.'
-        this._safeDeny(envelope, reason, decision.decisionSource)
-        await this._emitAuditPre(envelope, decision, AuditAction.CALL_DENIED, session)
+        this._safeDeny(toolCall, reason, decision.decisionSource)
+        await this._emitAuditPre(toolCall, decision, AuditAction.CALL_DENIED, session)
         return reason
       }
 
       try {
-        const principalDict = envelope.principal
-          ? ({ ...envelope.principal } as Record<string, unknown>)
+        const principalDict = toolCall.principal
+          ? ({ ...toolCall.principal } as Record<string, unknown>)
           : null
 
         const approvalRequest = await approvalBackend.requestApproval(
-          envelope.toolName,
-          envelope.args as Record<string, unknown>,
+          toolCall.toolName,
+          toolCall.args as Record<string, unknown>,
           decision.approvalMessage ?? decision.reason ?? 'Approval required.',
           {
             timeout: decision.approvalTimeout,
@@ -417,7 +417,7 @@ export class EdictumOpenClawAdapter {
           },
         )
 
-        await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_REQUESTED, session)
+        await this._emitAuditPre(toolCall, decision, AuditAction.CALL_APPROVAL_REQUESTED, session)
 
         const approvalDecision = await approvalBackend.waitForDecision(
           approvalRequest.approvalId,
@@ -426,20 +426,20 @@ export class EdictumOpenClawAdapter {
 
         let approved = false
         if (approvalDecision.status === ApprovalStatus.TIMEOUT) {
-          await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_TIMEOUT, session)
+          await this._emitAuditPre(toolCall, decision, AuditAction.CALL_APPROVAL_TIMEOUT, session)
           if (decision.approvalTimeoutEffect === 'allow') {
             approved = true
           }
         } else if (!approvalDecision.approved) {
-          await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_DENIED, session)
+          await this._emitAuditPre(toolCall, decision, AuditAction.CALL_APPROVAL_DENIED, session)
         } else {
           approved = true
-          await this._emitAuditPre(envelope, decision, AuditAction.CALL_APPROVAL_GRANTED, session)
+          await this._emitAuditPre(toolCall, decision, AuditAction.CALL_APPROVAL_GRANTED, session)
         }
 
         if (approved) {
           const committedWorkflow = await this._finalizeWorkflowApproval(
-            envelope,
+            toolCall,
             session,
             workflowStageId,
             workflowApprovalStageId,
@@ -448,9 +448,9 @@ export class EdictumOpenClawAdapter {
             return committedWorkflow.reason ?? 'Workflow still does not allow this call.'
           }
           workflowStageId = committedWorkflow.stageId
-          this._safeAllow(envelope)
+          this._safeAllow(toolCall)
           this._trackPending(callId, {
-            envelope,
+            toolCall,
             startMs: Date.now(),
             sessionId: session.sessionId,
             workflowStageId,
@@ -459,15 +459,15 @@ export class EdictumOpenClawAdapter {
         }
 
         const denyReason = approvalDecision.reason ?? decision.reason ?? 'Approval denied.'
-        this._safeDeny(envelope, denyReason, decision.decisionSource)
+        this._safeDeny(toolCall, denyReason, decision.decisionSource)
         // CALL_APPROVAL_DENIED or CALL_APPROVAL_TIMEOUT already emitted above —
         // do not double-emit CALL_DENIED to avoid double-counting in audit analysis.
         return denyReason
       } catch {
         // Approval backend failure -> deny (not timeout — distinguish infra errors from real timeouts)
         const errorReason = 'Approval backend error'
-        this._safeDeny(envelope, errorReason, decision.decisionSource)
-        await this._emitAuditPre(envelope, decision, AuditAction.CALL_DENIED, session)
+        this._safeDeny(toolCall, errorReason, decision.decisionSource)
+        await this._emitAuditPre(toolCall, decision, AuditAction.CALL_DENIED, session)
         return errorReason
       }
     }
@@ -476,27 +476,27 @@ export class EdictumOpenClawAdapter {
     if (decision.action === 'deny') {
       // Observe mode: convert deny → allow with CALL_WOULD_DENY audit
       if (this._guard.mode === 'observe' || decision.observed) {
-        await this._emitAuditPre(envelope, decision, AuditAction.CALL_WOULD_DENY, session)
-        this._safeAllow(envelope)
+        await this._emitAuditPre(toolCall, decision, AuditAction.CALL_WOULD_DENY, session)
+        this._safeAllow(toolCall)
         this._trackPending(callId, {
-          envelope,
+          toolCall,
           startMs: Date.now(),
           sessionId: session.sessionId,
           workflowStageId,
         })
-        await this._emitObserveResults(envelope, decision)
+        await this._emitObserveResults(toolCall, decision)
         return null
       }
 
-      const reason = decision.reason ?? 'Denied by contract.'
-      this._safeDeny(envelope, reason, decision.decisionSource)
-      await this._emitAuditPre(envelope, decision, AuditAction.CALL_DENIED, session)
+      const reason = decision.reason ?? 'Blocked by rule.'
+      this._safeDeny(toolCall, reason, decision.decisionSource)
+      await this._emitAuditPre(toolCall, decision, AuditAction.CALL_DENIED, session)
       return reason
     }
 
     // --- Allow ---
     const committedWorkflow = await this._finalizeWorkflowApproval(
-      envelope,
+      toolCall,
       session,
       workflowStageId,
       workflowApprovalStageId,
@@ -505,17 +505,17 @@ export class EdictumOpenClawAdapter {
       return committedWorkflow.reason ?? 'Workflow still does not allow this call.'
     }
     workflowStageId = committedWorkflow.stageId
-    await this._emitAuditPre(envelope, decision, AuditAction.CALL_ALLOWED, session)
-    this._safeAllow(envelope)
+    await this._emitAuditPre(toolCall, decision, AuditAction.CALL_ALLOWED, session)
+    this._safeAllow(toolCall)
     this._trackPending(callId, {
-      envelope,
+      toolCall,
       startMs: Date.now(),
       sessionId: session.sessionId,
       workflowStageId,
     })
 
-    // Observe-mode audits — emit individual events for observe_alongside contracts
-    await this._emitObserveResults(envelope, decision)
+    // Observe-mode audits — emit individual events for observe_alongside rules
+    await this._emitObserveResults(toolCall, decision)
 
     return null
   }
@@ -526,7 +526,7 @@ export class EdictumOpenClawAdapter {
 
   /**
    * Evaluate a tool call after execution.
-   * Returns postcondition findings and output suppression info.
+   * Returns output-check violations and output suppression info.
    */
   async post(
     callId: string,
@@ -538,23 +538,23 @@ export class EdictumOpenClawAdapter {
       return {
         result: toolResponse,
         postconditionsPassed: true,
-        findings: [],
+        violations: [],
         outputSuppressed: false,
       }
     }
     this._pending.delete(callId)
 
-    const { envelope, startMs } = pending
+    const { toolCall, startMs } = pending
     const session = new Session(pending.sessionId, this._guard.backend)
     const durationMs = afterEvent.durationMs ?? Date.now() - startMs
     const toolSuccess = this._checkToolSuccess(afterEvent.toolName, toolResponse, afterEvent.error)
 
-    const postDecision = await this._pipeline.postExecute(envelope, toolResponse, toolSuccess)
+    const postDecision = await this._pipeline.postExecute(toolCall, toolResponse, toolSuccess)
 
-    await session.recordExecution(envelope.toolName, toolSuccess)
+    await session.recordExecution(toolCall.toolName, toolSuccess)
     if (toolSuccess && this._workflowRuntime && pending.workflowStageId !== null) {
       try {
-        await recordWorkflowResult(this._workflowRuntime, session, pending.workflowStageId, envelope)
+        await recordWorkflowResult(this._workflowRuntime, session, pending.workflowStageId, toolCall)
       } catch {
         // Workflow persistence errors must not disrupt post-execution auditing.
       }
@@ -572,14 +572,14 @@ export class EdictumOpenClawAdapter {
       await this._guard.auditSink.emit(
         createAuditEvent({
           timestamp: new Date(),
-          runId: envelope.runId,
-          callId: envelope.callId,
-          callIndex: envelope.callIndex,
-          toolName: envelope.toolName,
-          toolArgs: this._guard.redaction.redactArgs(envelope.args) as Record<string, unknown>,
-          sideEffect: envelope.sideEffect,
-          environment: envelope.environment,
-          principal: envelope.principal ? { ...envelope.principal } : null,
+          runId: toolCall.runId,
+          callId: toolCall.callId,
+          callIndex: toolCall.callIndex,
+          toolName: toolCall.toolName,
+          toolArgs: this._guard.redaction.redactArgs(toolCall.args) as Record<string, unknown>,
+          sideEffect: toolCall.sideEffect,
+          environment: toolCall.environment,
+          principal: toolCall.principal ? { ...toolCall.principal } : null,
           action,
           decisionSource: null,
           decisionName: null,
@@ -602,9 +602,9 @@ export class EdictumOpenClawAdapter {
       // Audit errors must never block tool execution
     }
 
-    const findings = buildFindings(postDecision)
-    if (findings.length > 0) {
-      this._safePostconditionWarn(envelope, findings)
+    const violations = buildViolations(postDecision)
+    if (violations.length > 0) {
+      this._safeViolation(toolCall, violations)
     }
 
     const result = postDecision.outputSuppressed
@@ -616,7 +616,7 @@ export class EdictumOpenClawAdapter {
     return {
       result,
       postconditionsPassed: postDecision.postconditionsPassed,
-      findings,
+      violations,
       outputSuppressed: postDecision.outputSuppressed,
     }
   }
@@ -655,7 +655,7 @@ export class EdictumOpenClawAdapter {
             callId,
             toolName: event.toolName,
             action: AuditAction.CALL_DENIED,
-            reason: 'Governance error — call denied for safety',
+            reason: 'Rules error — call blocked for safety',
             mode: this._guard.mode,
             policyVersion: this._guard.policyVersion,
           }),
@@ -664,7 +664,7 @@ export class EdictumOpenClawAdapter {
         // Audit errors must never block
       }
       // NOTE: `block`/`blockReason` forced by OpenClaw plugin API contract.
-      return { block: true, blockReason: 'Governance error — call denied for safety' }
+      return { block: true, blockReason: 'Rules error — call blocked for safety' }
     }
 
     if (reason !== null) {
@@ -707,7 +707,7 @@ export class EdictumOpenClawAdapter {
    * The canonical key is only considered "present" if it exists AND is
    * non-nullish. This prevents a bypass where an adversarial input sends
    * { path: null, file: "/etc/shadow" } — the null path would satisfy
-   * `canonical in params` but fail every contract match, while the real
+   * `canonical in params` but fail every rule match, while the real
    * path in `file` goes unchecked.
    */
   static _normalizeParams(
@@ -804,7 +804,7 @@ export class EdictumOpenClawAdapter {
     let matchCount = 0
     let matchedCallId: string | null = null
     for (const [callId, pending] of this._pending) {
-      if (pending.envelope.toolName === toolName) {
+      if (pending.toolCall.toolName === toolName) {
         matchCount++
         matchedCallId = callId
       }
@@ -814,11 +814,11 @@ export class EdictumOpenClawAdapter {
   }
 
   /**
-   * Emit individual audit events for observe_alongside contracts.
+   * Emit individual audit events for observe-alongside rules.
    * Matches vercel-ai pattern (lines 382-413). Errors swallowed per-result.
    */
   private async _emitObserveResults(
-    envelope: Readonly<ToolEnvelope>,
+    toolCall: Readonly<ToolCall>,
     decision: { observeResults?: Record<string, unknown>[] },
   ): Promise<void> {
     const results = decision.observeResults
@@ -830,15 +830,15 @@ export class EdictumOpenClawAdapter {
         await this._guard.auditSink.emit(
           createAuditEvent({
             action: observeAction,
-            runId: envelope.runId,
-            callId: envelope.callId,
-            callIndex: envelope.callIndex,
-            toolName: envelope.toolName,
-            toolArgs: this._guard.redaction.redactArgs(envelope.args) as Record<string, unknown>,
-            sideEffect: envelope.sideEffect,
-            environment: envelope.environment,
-            principal: envelope.principal
-              ? ({ ...envelope.principal } as Record<string, unknown>)
+            runId: toolCall.runId,
+            callId: toolCall.callId,
+            callIndex: toolCall.callIndex,
+            toolName: toolCall.toolName,
+            toolArgs: this._guard.redaction.redactArgs(toolCall.args) as Record<string, unknown>,
+            sideEffect: toolCall.sideEffect,
+            environment: toolCall.environment,
+            principal: toolCall.principal
+              ? ({ ...toolCall.principal } as Record<string, unknown>)
               : null,
             decisionSource: (sr['source'] as string) ?? null,
             decisionName: (sr['name'] as string) ?? null,
@@ -889,35 +889,35 @@ export class EdictumOpenClawAdapter {
     this._pending.set(callId, pending)
   }
 
-  private _safeDeny(envelope: Readonly<ToolEnvelope>, reason: string, source: string | null): void {
+  private _safeDeny(toolCall: Readonly<ToolCall>, reason: string, source: string | null): void {
     try {
-      this._onDeny?.(envelope, reason, source)
+      this._onDeny?.(toolCall, reason, source)
     } catch {
       // Callback errors must never propagate
     }
   }
 
-  private _safeAllow(envelope: Readonly<ToolEnvelope>): void {
+  private _safeAllow(toolCall: Readonly<ToolCall>): void {
     try {
-      this._onAllow?.(envelope)
+      this._onAllow?.(toolCall)
     } catch {
       // Callback errors must never propagate
     }
   }
 
-  private _safePostconditionWarn(
-    envelope: Readonly<ToolEnvelope>,
-    findings: readonly Finding[],
+  private _safeViolation(
+    toolCall: Readonly<ToolCall>,
+    violations: readonly Violation[],
   ): void {
     try {
-      this._onPostconditionWarn?.(envelope, findings)
+      this._onViolation?.(toolCall, violations)
     } catch {
       // Callback errors must never propagate
     }
   }
 
   private async _emitAuditPre(
-    envelope: Readonly<ToolEnvelope>,
+    toolCall: Readonly<ToolCall>,
     decision: {
       reason: string | null
       decisionSource: string | null
@@ -939,14 +939,14 @@ export class EdictumOpenClawAdapter {
       await this._guard.auditSink.emit(
         createAuditEvent({
           timestamp: new Date(),
-          runId: envelope.runId,
-          callId: envelope.callId,
-          callIndex: envelope.callIndex,
-          toolName: envelope.toolName,
-          toolArgs: this._guard.redaction.redactArgs(envelope.args) as Record<string, unknown>,
-          sideEffect: envelope.sideEffect,
-          environment: envelope.environment,
-          principal: envelope.principal ? { ...envelope.principal } : null,
+          runId: toolCall.runId,
+          callId: toolCall.callId,
+          callIndex: toolCall.callIndex,
+          toolName: toolCall.toolName,
+          toolArgs: this._guard.redaction.redactArgs(toolCall.args) as Record<string, unknown>,
+          sideEffect: toolCall.sideEffect,
+          environment: toolCall.environment,
+          principal: toolCall.principal ? { ...toolCall.principal } : null,
           action,
           decisionSource: decision.decisionSource,
           decisionName: decision.decisionName,
@@ -1018,13 +1018,13 @@ export class EdictumOpenClawAdapter {
   }
 
   private async _handleWorkflowBlock(
-    envelope: Readonly<ToolEnvelope>,
+    toolCall: Readonly<ToolCall>,
     decision: NormalizedWorkflowDecision,
     session: Session,
   ): Promise<string | null> {
     if (this._guard.mode === 'observe') {
       await this._emitAuditPre(
-        envelope,
+        toolCall,
         this._createWorkflowAuditDecision(decision),
         AuditAction.CALL_WOULD_DENY,
         session,
@@ -1033,9 +1033,9 @@ export class EdictumOpenClawAdapter {
     }
 
     const reason = decision.reason ?? 'Workflow blocked this tool call.'
-    this._safeDeny(envelope, reason, 'workflow')
+    this._safeDeny(toolCall, reason, 'workflow')
     await this._emitAuditPre(
-      envelope,
+      toolCall,
       this._createWorkflowAuditDecision(decision),
       AuditAction.CALL_DENIED,
       session,
@@ -1044,13 +1044,13 @@ export class EdictumOpenClawAdapter {
   }
 
   private async _satisfyWorkflowApproval(
-    envelope: Readonly<ToolEnvelope>,
+    toolCall: Readonly<ToolCall>,
     decision: NormalizedWorkflowDecision,
     session: Session,
   ): Promise<WorkflowApprovalOutcome> {
     if (this._guard.mode === 'observe') {
       await this._emitAuditPre(
-        envelope,
+        toolCall,
         this._createWorkflowAuditDecision(decision),
         AuditAction.CALL_WOULD_DENY,
         session,
@@ -1062,9 +1062,9 @@ export class EdictumOpenClawAdapter {
 
     if (!approvalBackend) {
       const reason = decision.reason ?? 'Workflow approval required but no approval backend configured.'
-      this._safeDeny(envelope, reason, 'workflow')
+      this._safeDeny(toolCall, reason, 'workflow')
       await this._emitAuditPre(
-        envelope,
+        toolCall,
         this._createWorkflowAuditDecision(decision),
         AuditAction.CALL_DENIED,
         session,
@@ -1073,13 +1073,13 @@ export class EdictumOpenClawAdapter {
     }
 
     try {
-      const principalDict = envelope.principal
-        ? ({ ...envelope.principal } as Record<string, unknown>)
+      const principalDict = toolCall.principal
+        ? ({ ...toolCall.principal } as Record<string, unknown>)
         : null
 
       const approvalRequest = await approvalBackend.requestApproval(
-        envelope.toolName,
-        envelope.args as Record<string, unknown>,
+        toolCall.toolName,
+        toolCall.args as Record<string, unknown>,
         decision.approvalMessage ?? decision.reason ?? 'Workflow approval required.',
         {
           timeout: decision.approvalTimeout ?? 300,
@@ -1089,7 +1089,7 @@ export class EdictumOpenClawAdapter {
       )
 
       await this._emitAuditPre(
-        envelope,
+        toolCall,
         this._createWorkflowAuditDecision(decision),
         AuditAction.CALL_APPROVAL_REQUESTED,
         session,
@@ -1103,7 +1103,7 @@ export class EdictumOpenClawAdapter {
       let approved = false
       if (approvalDecision.status === ApprovalStatus.TIMEOUT) {
         await this._emitAuditPre(
-          envelope,
+          toolCall,
           this._createWorkflowAuditDecision(decision),
           AuditAction.CALL_APPROVAL_TIMEOUT,
           session,
@@ -1113,7 +1113,7 @@ export class EdictumOpenClawAdapter {
         }
       } else if (!approvalDecision.approved) {
         await this._emitAuditPre(
-          envelope,
+          toolCall,
           this._createWorkflowAuditDecision(decision),
           AuditAction.CALL_APPROVAL_DENIED,
           session,
@@ -1121,7 +1121,7 @@ export class EdictumOpenClawAdapter {
       } else {
         approved = true
         await this._emitAuditPre(
-          envelope,
+          toolCall,
           this._createWorkflowAuditDecision(decision),
           AuditAction.CALL_APPROVAL_GRANTED,
           session,
@@ -1130,7 +1130,7 @@ export class EdictumOpenClawAdapter {
 
       if (!approved) {
         const denyReason = approvalDecision.reason ?? decision.reason ?? 'Approval denied.'
-        this._safeDeny(envelope, denyReason, 'workflow')
+        this._safeDeny(toolCall, denyReason, 'workflow')
         return { allowed: false, reason: denyReason, stageId: decision.stageId, observed: false }
       }
 
@@ -1142,9 +1142,9 @@ export class EdictumOpenClawAdapter {
       }
     } catch {
       const reason = 'Approval backend error'
-      this._safeDeny(envelope, reason, 'workflow')
+      this._safeDeny(toolCall, reason, 'workflow')
       await this._emitAuditPre(
-        envelope,
+        toolCall,
         this._createWorkflowAuditDecision(decision),
         AuditAction.CALL_DENIED,
         session,
@@ -1154,7 +1154,7 @@ export class EdictumOpenClawAdapter {
   }
 
   private async _finalizeWorkflowApproval(
-    envelope: Readonly<ToolEnvelope>,
+    toolCall: Readonly<ToolCall>,
     session: Session,
     workflowStageId: string | null,
     workflowApprovalStageId: string | null,
@@ -1165,12 +1165,12 @@ export class EdictumOpenClawAdapter {
 
     try {
       await recordWorkflowApproval(this._workflowRuntime, session, workflowApprovalStageId)
-      const retryDecision = await evaluateWorkflow(this._workflowRuntime, session, envelope)
+      const retryDecision = await evaluateWorkflow(this._workflowRuntime, session, toolCall)
       if (retryDecision.action === 'block' || retryDecision.action === 'pending_approval') {
         const reason = retryDecision.reason ?? 'Workflow still does not allow this call.'
-        this._safeDeny(envelope, reason, 'workflow')
+        this._safeDeny(toolCall, reason, 'workflow')
         await this._emitAuditPre(
-          envelope,
+          toolCall,
           this._createWorkflowAuditDecision(retryDecision),
           AuditAction.CALL_DENIED,
           session,
@@ -1189,9 +1189,9 @@ export class EdictumOpenClawAdapter {
       }
     } catch {
       const reason = 'Workflow approval persistence error'
-      this._safeDeny(envelope, reason, 'workflow')
+      this._safeDeny(toolCall, reason, 'workflow')
       await this._emitAuditPre(
-        envelope,
+        toolCall,
         this._createWorkflowAuditDecision({
           action: 'block',
           reason,

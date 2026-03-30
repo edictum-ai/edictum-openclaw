@@ -1,17 +1,18 @@
 // @edictum/edictum — helper functions extracted from adapter.ts
 
-import type { Finding } from './types.js'
+import { classifyViolation, createViolation } from '@edictum/core'
+import type { Violation } from './types.js'
 
 // ---------------------------------------------------------------------------
-// buildFindings
+// buildViolations
 // ---------------------------------------------------------------------------
 
-export function buildFindings(postDecision: {
+export function buildViolations(postDecision: {
   postconditionsPassed: boolean
   warnings: string[]
   contractsEvaluated: Record<string, unknown>[]
   policyError: boolean
-}): Finding[] {
+}): Violation[] {
   if (
     postDecision.postconditionsPassed &&
     !postDecision.policyError &&
@@ -19,30 +20,45 @@ export function buildFindings(postDecision: {
   ) {
     return []
   }
-  const findings: Finding[] = []
+  const violations: Violation[] = []
   for (const w of postDecision.warnings) {
-    findings.push({
-      contractId: null,
-      message: w,
-      tags: [],
-      severity: 'warn',
-    })
+    violations.push(
+      createViolation({
+        type: 'warning',
+        ruleId: 'warning',
+        field: 'output',
+        message: w,
+      }),
+    )
   }
   for (const c of postDecision.contractsEvaluated) {
     if (c.passed === false || c.policyError === true) {
-      findings.push({
-        contractId: (c.name as string) ?? (c.contractId as string) ?? null,
-        message: (c.message as string) ?? 'Postcondition failed.',
-        tags: (() => {
-          const meta = c.metadata as Record<string, unknown> | undefined
-          const tags = meta?.tags ?? c.tags
-          return Array.isArray(tags) ? tags.filter((t): t is string => typeof t === 'string') : []
-        })(),
-        severity: (c.policyError as boolean) ? 'error' : 'warn',
-      })
+      const metadata = {
+        ...((c.metadata as Record<string, unknown> | undefined) ?? {}),
+      }
+      if (!Array.isArray(metadata.tags) && Array.isArray(c.tags)) {
+        metadata.tags = c.tags
+      }
+      const ruleId =
+        (c.name as string | undefined) ??
+        (c.ruleId as string | undefined) ??
+        (c.contractId as string | undefined) ??
+        'output'
+
+      violations.push(
+        createViolation({
+          type: (c.policyError as boolean)
+            ? 'policy_error'
+            : classifyViolation(ruleId, (c.message as string | undefined) ?? 'Output check failed.'),
+          ruleId,
+          field: (metadata.field as string | undefined) ?? 'output',
+          message: (c.message as string) ?? 'Output check failed.',
+          metadata,
+        }),
+      )
     }
   }
-  return findings
+  return violations
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 {
   "packageManager": "pnpm@10.11.0",
   "name": "@edictum/edictum",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "OpenClaw adapter and plugin for Edictum runtime contract enforcement — one command, zero code changes",
   "license": "MIT",
   "type": "module",

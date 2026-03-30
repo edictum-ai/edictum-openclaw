@@ -23,6 +23,10 @@ interface WorkflowState {
   readonly calls: Readonly<Record<string, readonly string[]>>
 }
 
+interface ApprovalWorkflowState {
+  readonly approvals: readonly string[]
+}
+
 function makeCtx(overrides: Partial<ToolHookContext> = {}): ToolHookContext {
   return {
     toolName: 'Read',
@@ -216,6 +220,55 @@ class ObserveApprovalWorkflowRuntime implements WorkflowRuntimeLike {
       reason: 'Review required',
       approvalMessage: 'Review required',
     }
+  }
+}
+
+class DeferredApprovalWorkflowRuntime implements WorkflowRuntimeLike {
+  constructor(private readonly backend: MemoryBackend) {}
+
+  async evaluate(...args: unknown[]) {
+    const { session, envelope } = normalizeEvaluateArgs(args)
+    if (envelope.toolName !== 'Edit') {
+      return { action: 'allow' as const, stageId: 'noop' }
+    }
+
+    const state = await this.getState(session.sessionId)
+    if (!state.approvals.includes('review-gate')) {
+      return {
+        action: 'pending_approval' as const,
+        stageId: 'review-gate',
+        reason: 'Workflow review required',
+        approvalMessage: 'Workflow review required',
+      }
+    }
+
+    return { action: 'allow' as const, stageId: 'implement' }
+  }
+
+  async recordApproval(session: Session, stageId: string) {
+    const state = await this.getState(session.sessionId)
+    if (state.approvals.includes(stageId)) {
+      return
+    }
+    await this.saveState(session.sessionId, {
+      approvals: [...state.approvals, stageId],
+    })
+  }
+
+  async getState(sessionId: string): Promise<ApprovalWorkflowState> {
+    const raw = await this.backend.get(this.key(sessionId))
+    if (raw === null) {
+      return { approvals: [] }
+    }
+    return JSON.parse(raw) as ApprovalWorkflowState
+  }
+
+  private async saveState(sessionId: string, state: ApprovalWorkflowState): Promise<void> {
+    await this.backend.set(this.key(sessionId), JSON.stringify(state))
+  }
+
+  private key(sessionId: string): string {
+    return `workflow:approval:${sessionId}`
   }
 }
 
@@ -478,5 +531,114 @@ describe('workflow integration', () => {
     expect(sink.events.some((event) => event.action === 'call_would_deny')).toBe(true)
     expect(sink.events.some((event) => event.action === 'call_denied')).toBe(false)
     expect(sink.events.some((event) => event.action === 'call_allowed')).toBe(false)
+  })
+
+  it('defers workflow approval persistence until contract approval succeeds', async () => {
+    const approvalBackend: ApprovalBackend = {
+      requestApproval: vi.fn(async (_toolName, _toolArgs, _message, _opts) => ({
+        approvalId: `mock-approval-${(_opts?.principal ?? null) === null ? 'none' : 'principal'}`,
+        toolName: _toolName,
+        toolArgs: Object.freeze({ ..._toolArgs }),
+        message: _message,
+        timeout: _opts?.timeout ?? 300,
+        timeoutEffect: _opts?.timeoutEffect ?? 'deny',
+        principal: _opts?.principal ?? null,
+        metadata: Object.freeze({}),
+        createdAt: new Date(),
+      })),
+      waitForDecision: vi
+        .fn()
+        .mockResolvedValueOnce({
+          approved: true,
+          approver: 'workflow-reviewer',
+          reason: null,
+          status: ApprovalStatus.APPROVED,
+          timestamp: new Date(),
+        })
+        .mockResolvedValueOnce({
+          approved: false,
+          approver: 'contract-reviewer',
+          reason: 'Contract denied',
+          status: ApprovalStatus.DENIED,
+          timestamp: new Date(),
+        })
+        .mockResolvedValueOnce({
+          approved: true,
+          approver: 'workflow-reviewer',
+          reason: null,
+          status: ApprovalStatus.APPROVED,
+          timestamp: new Date(),
+        })
+        .mockResolvedValueOnce({
+          approved: true,
+          approver: 'contract-reviewer',
+          reason: null,
+          status: ApprovalStatus.APPROVED,
+          timestamp: new Date(),
+        }),
+    }
+
+    const guard = new Edictum({
+      backend,
+      auditSink: new CollectingAuditSink(),
+      approvalBackend,
+    })
+
+    guard._replaceState(
+      createCompiledState({
+        preconditions: [
+          {
+            type: 'precondition',
+            name: 'require-approval',
+            tool: 'Edit',
+            effect: 'approve',
+            check: () => ({
+              passed: false,
+              message: 'Needs approval',
+              metadata: Object.freeze({}),
+            }),
+          },
+        ],
+      }),
+    )
+
+    const handlers: Record<
+      string,
+      { handler: (...args: unknown[]) => unknown; opts?: { priority?: number } }
+    > = {}
+    const runtime = new DeferredApprovalWorkflowRuntime(backend)
+    const plugin = createEdictumPlugin(guard, { workflowRuntime: runtime })
+    const api: OpenClawPluginApi = {
+      id: 'edictum',
+      name: 'Edictum',
+      config: {},
+      on: vi.fn(
+        (
+          hookName: string,
+          handler: (...args: unknown[]) => unknown,
+          opts?: { priority?: number },
+        ) => {
+          handlers[hookName] = { handler, opts }
+        },
+      ),
+    }
+    plugin.register(api)
+
+    const denied = await handlers['before_tool_call'].handler(
+      makeEditEvent({ toolCallId: 'tc-workflow-contract-denied' }),
+      makeCtx({ toolName: 'Edit', toolCallId: 'tc-workflow-contract-denied' }),
+    )
+    expect(denied).toEqual({ block: true, blockReason: 'Contract denied' })
+    expect(await runtime.getState('sid-mimi')).toEqual({ approvals: [] })
+
+    const allowed = await handlers['before_tool_call'].handler(
+      makeEditEvent({ toolCallId: 'tc-workflow-contract-approved' }),
+      makeCtx({ toolName: 'Edit', toolCallId: 'tc-workflow-contract-approved' }),
+    )
+    expect(allowed).toBeUndefined()
+    expect(await runtime.getState('sid-mimi')).toEqual({ approvals: ['review-gate'] })
+
+    expect(approvalBackend.requestApproval).toHaveBeenCalledTimes(4)
+    expect(approvalBackend.waitForDecision).toHaveBeenCalledTimes(4)
   })
 })

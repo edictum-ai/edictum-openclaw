@@ -318,6 +318,7 @@ export class EdictumOpenClawAdapter {
     await session.incrementAttempts()
     const decision = await this._pipeline.preExecute(envelope, session)
     let workflowStageId = extractWorkflowStageId(decision)
+    let workflowApprovalStageId: string | null = null
 
     if (
       this._workflowRuntime &&
@@ -360,7 +361,8 @@ export class EdictumOpenClawAdapter {
           })
           return null
         }
-        workflowStageId = workflowApproval.stageId
+        workflowApprovalStageId = workflowApproval.stageId
+        workflowStageId = null
       } else if (workflowDecision.action === 'allow') {
         workflowStageId = workflowDecision.stageId
       }
@@ -415,6 +417,16 @@ export class EdictumOpenClawAdapter {
         }
 
         if (approved) {
+          const committedWorkflow = await this._finalizeWorkflowApproval(
+            envelope,
+            session,
+            workflowStageId,
+            workflowApprovalStageId,
+          )
+          if (!committedWorkflow.allowed) {
+            return committedWorkflow.reason ?? 'Workflow still does not allow this call.'
+          }
+          workflowStageId = committedWorkflow.stageId
           this._safeAllow(envelope)
           this._trackPending(callId, {
             envelope,
@@ -462,6 +474,16 @@ export class EdictumOpenClawAdapter {
     }
 
     // --- Allow ---
+    const committedWorkflow = await this._finalizeWorkflowApproval(
+      envelope,
+      session,
+      workflowStageId,
+      workflowApprovalStageId,
+    )
+    if (!committedWorkflow.allowed) {
+      return committedWorkflow.reason ?? 'Workflow still does not allow this call.'
+    }
+    workflowStageId = committedWorkflow.stageId
     await this._emitAuditPre(envelope, decision, AuditAction.CALL_ALLOWED, session)
     this._safeAllow(envelope)
     this._trackPending(callId, {
@@ -1091,33 +1113,6 @@ export class EdictumOpenClawAdapter {
         return { allowed: false, reason: denyReason, stageId: decision.stageId, observed: false }
       }
 
-      if (this._workflowRuntime && decision.stageId) {
-        await recordWorkflowApproval(this._workflowRuntime, session, decision.stageId)
-        const retryDecision = await evaluateWorkflow(this._workflowRuntime, session, envelope)
-        if (retryDecision.action === 'block' || retryDecision.action === 'pending_approval') {
-          const reason = retryDecision.reason ?? 'Workflow still does not allow this call.'
-          this._safeDeny(envelope, reason, 'workflow')
-          await this._emitAuditPre(
-            envelope,
-            this._createWorkflowAuditDecision(retryDecision),
-            AuditAction.CALL_DENIED,
-            session,
-          )
-          return {
-            allowed: false,
-            reason,
-            stageId: retryDecision.stageId,
-            observed: false,
-          }
-        }
-        return {
-          allowed: true,
-          reason: null,
-          stageId: retryDecision.stageId,
-          observed: false,
-        }
-      }
-
       return {
         allowed: true,
         reason: null,
@@ -1134,6 +1129,60 @@ export class EdictumOpenClawAdapter {
         session,
       )
       return { allowed: false, reason, stageId: decision.stageId, observed: false }
+    }
+  }
+
+  private async _finalizeWorkflowApproval(
+    envelope: Readonly<ToolEnvelope>,
+    session: Session,
+    workflowStageId: string | null,
+    workflowApprovalStageId: string | null,
+  ): Promise<{ allowed: boolean; reason: string | null; stageId: string | null }> {
+    if (!this._workflowRuntime || workflowApprovalStageId === null) {
+      return { allowed: true, reason: null, stageId: workflowStageId }
+    }
+
+    try {
+      await recordWorkflowApproval(this._workflowRuntime, session, workflowApprovalStageId)
+      const retryDecision = await evaluateWorkflow(this._workflowRuntime, session, envelope)
+      if (retryDecision.action === 'block' || retryDecision.action === 'pending_approval') {
+        const reason = retryDecision.reason ?? 'Workflow still does not allow this call.'
+        this._safeDeny(envelope, reason, 'workflow')
+        await this._emitAuditPre(
+          envelope,
+          this._createWorkflowAuditDecision(retryDecision),
+          AuditAction.CALL_DENIED,
+          session,
+        )
+        return {
+          allowed: false,
+          reason,
+          stageId: retryDecision.stageId,
+        }
+      }
+
+      return {
+        allowed: true,
+        reason: null,
+        stageId: retryDecision.stageId,
+      }
+    } catch {
+      const reason = 'Workflow approval persistence error'
+      this._safeDeny(envelope, reason, 'workflow')
+      await this._emitAuditPre(
+        envelope,
+        this._createWorkflowAuditDecision({
+          action: 'block',
+          reason,
+          stageId: workflowApprovalStageId,
+          approvalMessage: null,
+          approvalTimeout: null,
+          approvalTimeoutEffect: null,
+        }),
+        AuditAction.CALL_DENIED,
+        session,
+      )
+      return { allowed: false, reason, stageId: workflowApprovalStageId }
     }
   }
 }

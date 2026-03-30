@@ -79,6 +79,19 @@ export interface OpenClawPluginApi {
 }
 
 /**
+ * Plugin configuration accepted by the native OpenClaw plugin entry point.
+ */
+export interface EdictumNativePluginConfig {
+  readonly enabled?: boolean
+  readonly contractsPath?: string
+  readonly workflowPath?: string
+  readonly mode?: 'enforce' | 'observe'
+  readonly serverUrl?: string
+  readonly apiKey?: string
+  readonly agentId?: string
+}
+
+/**
  * Finding from a postcondition evaluation.
  */
 export interface Finding {

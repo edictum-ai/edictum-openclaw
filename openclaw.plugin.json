@@ -14,6 +14,9 @@
       "contractsPath": {
         "type": "string"
       },
+      "workflowPath": {
+        "type": "string"
+      },
       "mode": {
         "type": "string",
         "enum": ["enforce", "observe"]
@@ -33,6 +36,10 @@
     "contractsPath": {
       "label": "Contracts Path",
       "help": "Path to a custom YAML contract bundle (defaults to the bundled openclaw-governance.yaml)"
+    },
+    "workflowPath": {
+      "label": "Workflow Path",
+      "help": "Path to a Workflow YAML definition to enforce alongside the ruleset"
     },
     "mode": {
       "label": "Enforcement Mode",

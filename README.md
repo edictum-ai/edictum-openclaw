@@ -91,9 +91,32 @@ Configure in your OpenClaw config under `plugins.entries.edictum`:
 | `enabled` | boolean | `true` | Enable/disable the plugin |
 | `mode` | `"enforce"` \| `"observe"` | `"enforce"` | Enforce blocks violations; observe logs without blocking |
 | `contractsPath` | string | bundled YAML | Path to a custom contract bundle |
+| `workflowPath` | string | — | Path to a Workflow YAML definition enforced alongside the ruleset |
 | `serverUrl` | string | — | Edictum Console URL for HITL approvals and audit feeds |
 | `apiKey` | string | — | API key for Console connection |
 | `agentId` | string | — | Agent identifier for Console fleet monitoring |
+
+### Enable Workflow Gates
+
+To enforce Workflow Gates for Mimi/OpenClaw, configure both a ruleset and a workflow:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "edictum": {
+        "contractsPath": "/path/to/custom-contracts.yaml",
+        "workflowPath": "/path/to/workflow.yaml",
+        "serverUrl": "https://console.example.com",
+        "apiKey": "edk_production_...",
+        "agentId": "mimi"
+      }
+    }
+  }
+}
+```
+
+`workflowPath` uses the OpenClaw session identity for workflow state, and real treatment runs require Console-backed persistence via `serverUrl` + `apiKey`. Memory-backed workflow state is only accepted in tests.
 
 ### Connect to Edictum Console
 

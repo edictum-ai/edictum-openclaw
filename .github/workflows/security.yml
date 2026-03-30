@@ -1,0 +1,64 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly scan — catches newly disclosed CVEs in existing deps
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: security-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  trivy:
+    name: Trivy vulnerability + secret scan
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Run Trivy (SARIF)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@3b1a19a80ab047f35cbb237b5bd9bdc1e14f166c # v3
+        continue-on-error: true
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Run Trivy (table — report HIGH+)
+        if: github.event_name != 'schedule'
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 0
+          ignore-unfixed: true
+
+      - name: Run Trivy (table — fail on HIGH+)
+        if: github.event_name == 'schedule'
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          ignore-unfixed: true

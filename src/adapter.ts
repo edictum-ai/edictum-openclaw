@@ -226,8 +226,6 @@ export class EdictumOpenClawAdapter {
     callId: string,
     ctx: ToolHookContext,
   ): Promise<string | null> {
-    const session = this._createSession(ctx)
-
     // Validate callId — length cap (#52) + control character check (#43).
     // The regex is O(n) character class with no backtracking risk, but we cap
     // input length as a precautionary measure per project security policy.
@@ -250,6 +248,29 @@ export class EdictumOpenClawAdapter {
         // Audit errors must never block tool execution
       }
       return 'Invalid callId'
+    }
+
+    let session: Session
+    try {
+      session = this._createSession(ctx)
+    } catch {
+      try {
+        await this._guard.auditSink.emit(
+          createAuditEvent({
+            timestamp: new Date(),
+            runId: ctx.runId ?? this._sessionId,
+            callId,
+            toolName,
+            action: AuditAction.CALL_DENIED,
+            reason: 'Invalid sessionId',
+            mode: this._guard.mode,
+            policyVersion: this._guard.policyVersion,
+          }),
+        )
+      } catch {
+        // Audit errors must never block tool execution
+      }
+      return 'Invalid sessionId'
     }
 
     const principalResult = this._resolvePrincipal(toolName, toolInput, ctx)

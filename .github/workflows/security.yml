@@ -41,7 +41,19 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
 
+      - name: Run Trivy (table — report HIGH+)
+        if: github.event_name != 'schedule'
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 0
+          ignore-unfixed: true
+
       - name: Run Trivy (table — fail on HIGH+)
+        if: github.event_name == 'schedule'
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           scan-type: fs

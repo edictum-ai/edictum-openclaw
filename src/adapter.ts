@@ -143,6 +143,7 @@ interface WorkflowApprovalOutcome {
   readonly allowed: boolean
   readonly reason: string | null
   readonly stageId: string | null
+  readonly observed: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +349,16 @@ export class EdictumOpenClawAdapter {
         )
         if (!workflowApproval.allowed) {
           return workflowApproval.reason ?? 'Approval denied.'
+        }
+        if (workflowApproval.observed) {
+          this._safeAllow(envelope)
+          this._trackPending(callId, {
+            envelope,
+            startMs: Date.now(),
+            sessionId: session.sessionId,
+            workflowStageId: null,
+          })
+          return null
         }
         workflowStageId = workflowApproval.stageId
       } else if (workflowDecision.action === 'allow') {
@@ -994,6 +1005,16 @@ export class EdictumOpenClawAdapter {
     decision: NormalizedWorkflowDecision,
     session: Session,
   ): Promise<WorkflowApprovalOutcome> {
+    if (this._guard.mode === 'observe') {
+      await this._emitAuditPre(
+        envelope,
+        this._createWorkflowAuditDecision(decision),
+        AuditAction.CALL_WOULD_DENY,
+        session,
+      )
+      return { allowed: true, reason: null, stageId: null, observed: true }
+    }
+
     const approvalBackend = this._guard._approvalBackend
 
     if (!approvalBackend) {
@@ -1005,7 +1026,7 @@ export class EdictumOpenClawAdapter {
         AuditAction.CALL_DENIED,
         session,
       )
-      return { allowed: false, reason, stageId: decision.stageId }
+      return { allowed: false, reason, stageId: decision.stageId, observed: false }
     }
 
     try {
@@ -1067,7 +1088,7 @@ export class EdictumOpenClawAdapter {
       if (!approved) {
         const denyReason = approvalDecision.reason ?? decision.reason ?? 'Approval denied.'
         this._safeDeny(envelope, denyReason, 'workflow')
-        return { allowed: false, reason: denyReason, stageId: decision.stageId }
+        return { allowed: false, reason: denyReason, stageId: decision.stageId, observed: false }
       }
 
       if (this._workflowRuntime && decision.stageId) {
@@ -1082,12 +1103,18 @@ export class EdictumOpenClawAdapter {
             AuditAction.CALL_DENIED,
             session,
           )
-          return { allowed: false, reason, stageId: retryDecision.stageId }
+          return {
+            allowed: false,
+            reason,
+            stageId: retryDecision.stageId,
+            observed: false,
+          }
         }
         return {
           allowed: true,
           reason: null,
           stageId: retryDecision.stageId,
+          observed: false,
         }
       }
 
@@ -1095,6 +1122,7 @@ export class EdictumOpenClawAdapter {
         allowed: true,
         reason: null,
         stageId: decision.stageId,
+        observed: false,
       }
     } catch {
       const reason = 'Approval backend error'
@@ -1105,7 +1133,7 @@ export class EdictumOpenClawAdapter {
         AuditAction.CALL_DENIED,
         session,
       )
-      return { allowed: false, reason, stageId: decision.stageId }
+      return { allowed: false, reason, stageId: decision.stageId, observed: false }
     }
   }
 }

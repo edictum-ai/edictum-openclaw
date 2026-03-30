@@ -206,6 +206,19 @@ class FakeWorkflowRuntime implements WorkflowRuntimeLike {
   }
 }
 
+class ObserveApprovalWorkflowRuntime implements WorkflowRuntimeLike {
+  async evaluate(session: Session, envelope: ToolEnvelope) {
+    void session
+    void envelope
+    return {
+      action: 'pending_approval' as const,
+      stageId: 'review',
+      reason: 'Review required',
+      approvalMessage: 'Review required',
+    }
+  }
+}
+
 describe('workflow integration', () => {
   let backend: MemoryBackend
 
@@ -421,5 +434,49 @@ describe('workflow integration', () => {
     expect(result).toEqual({ block: true, blockReason: 'Read the spec first' })
     expect(approvalBackend.requestApproval).not.toHaveBeenCalled()
     expect(approvalBackend.waitForDecision).not.toHaveBeenCalled()
+  })
+
+  it('allows workflow approval gates through in observe mode without denying or mutating state', async () => {
+    const sink = new CollectingAuditSink()
+    const handlers: Record<
+      string,
+      { handler: (...args: unknown[]) => unknown; opts?: { priority?: number } }
+    > = {}
+
+    const plugin = createEdictumPlugin(
+      new Edictum({
+        backend,
+        auditSink: sink,
+        mode: 'observe',
+      }),
+      { workflowRuntime: new ObserveApprovalWorkflowRuntime() },
+    )
+
+    const api: OpenClawPluginApi = {
+      id: 'edictum',
+      name: 'Edictum',
+      config: {},
+      on: vi.fn(
+        (
+          hookName: string,
+          handler: (...args: unknown[]) => unknown,
+          opts?: { priority?: number },
+        ) => {
+          handlers[hookName] = { handler, opts }
+        },
+      ),
+    }
+
+    plugin.register(api)
+
+    const result = await handlers['before_tool_call'].handler(
+      makeEditEvent({ toolCallId: 'tc-observe-approval' }),
+      makeCtx({ toolName: 'Edit', toolCallId: 'tc-observe-approval' }),
+    )
+
+    expect(result).toBeUndefined()
+    expect(sink.events.some((event) => event.action === 'call_would_deny')).toBe(true)
+    expect(sink.events.some((event) => event.action === 'call_denied')).toBe(false)
+    expect(sink.events.some((event) => event.action === 'call_allowed')).toBe(false)
   })
 })

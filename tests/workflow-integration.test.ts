@@ -7,7 +7,7 @@ import {
   createCompiledState,
 } from '@edictum/core'
 import type { ApprovalBackend } from '@edictum/core'
-import type { Session, ToolEnvelope } from '@edictum/core'
+import type { Session, ToolCall } from '@edictum/core'
 
 import { createEdictumPlugin } from '../src/plugin.js'
 import type {
@@ -100,33 +100,33 @@ function capturePluginHandlers(runtime: WorkflowRuntimeLike, backend: MemoryBack
   return handlers
 }
 
-function normalizeEvaluateArgs(args: unknown[]): { session: Session; envelope: ToolEnvelope } {
+function normalizeEvaluateArgs(args: unknown[]): { session: Session; toolCall: ToolCall } {
   if (args.length >= 3) {
     return {
       session: args[1] as Session,
-      envelope: args[2] as ToolEnvelope,
+      toolCall: args[2] as ToolCall,
     }
   }
   return {
     session: args[0] as Session,
-    envelope: args[1] as ToolEnvelope,
+    toolCall: args[1] as ToolCall,
   }
 }
 
 function normalizeRecordResultArgs(
   args: unknown[],
-): { session: Session; stageId: string; envelope: ToolEnvelope } {
+): { session: Session; stageId: string; toolCall: ToolCall } {
   if (args.length >= 4) {
     return {
       session: args[1] as Session,
       stageId: args[2] as string,
-      envelope: args[3] as ToolEnvelope,
+      toolCall: args[3] as ToolCall,
     }
   }
   return {
     session: args[0] as Session,
     stageId: args[1] as string,
-    envelope: args[2] as ToolEnvelope,
+    toolCall: args[2] as ToolCall,
   }
 }
 
@@ -134,12 +134,12 @@ class FakeWorkflowRuntime implements WorkflowRuntimeLike {
   constructor(private readonly backend: MemoryBackend) {}
 
   async evaluate(...args: unknown[]) {
-    const { session, envelope } = normalizeEvaluateArgs(args)
+    const { session, toolCall } = normalizeEvaluateArgs(args)
     const state = await this.getState(session.sessionId)
     const hasRead = state.reads.includes('spec.md')
 
     if (!hasRead) {
-      if (envelope.toolName === 'Read' && envelope.filePath === 'spec.md') {
+      if (toolCall.toolName === 'Read' && toolCall.filePath === 'spec.md') {
         return { action: 'allow' as const, stageId: 'read-context' }
       }
       return {
@@ -149,7 +149,7 @@ class FakeWorkflowRuntime implements WorkflowRuntimeLike {
       }
     }
 
-    if (envelope.toolName === 'Edit') {
+    if (toolCall.toolName === 'Edit') {
       return { action: 'allow' as const, stageId: 'implement' }
     }
 
@@ -161,13 +161,13 @@ class FakeWorkflowRuntime implements WorkflowRuntimeLike {
   }
 
   async recordResult(...args: unknown[]) {
-    const { session, stageId, envelope } = normalizeRecordResultArgs(args)
+    const { session, stageId, toolCall } = normalizeRecordResultArgs(args)
     const state = await this.getState(session.sessionId)
 
-    if (stageId === 'read-context' && envelope.toolName === 'Read' && envelope.filePath) {
-      const reads = state.reads.includes(envelope.filePath)
+    if (stageId === 'read-context' && toolCall.toolName === 'Read' && toolCall.filePath) {
+      const reads = state.reads.includes(toolCall.filePath)
         ? state.reads
-        : [...state.reads, envelope.filePath]
+        : [...state.reads, toolCall.filePath]
       await this.saveState(session.sessionId, {
         reads,
         calls: state.calls,
@@ -177,7 +177,7 @@ class FakeWorkflowRuntime implements WorkflowRuntimeLike {
 
     const stageCalls = state.calls[stageId] ?? []
     const nextCall =
-      envelope.toolName === 'Bash' && envelope.bashCommand ? envelope.bashCommand : envelope.toolName
+      toolCall.toolName === 'Bash' && toolCall.bashCommand ? toolCall.bashCommand : toolCall.toolName
     const calls = stageCalls.includes(nextCall)
       ? stageCalls
       : [...stageCalls, nextCall]
@@ -211,9 +211,9 @@ class FakeWorkflowRuntime implements WorkflowRuntimeLike {
 }
 
 class ObserveApprovalWorkflowRuntime implements WorkflowRuntimeLike {
-  async evaluate(session: Session, envelope: ToolEnvelope) {
+  async evaluate(session: Session, toolCall: ToolCall) {
     void session
-    void envelope
+    void toolCall
     return {
       action: 'pending_approval' as const,
       stageId: 'review',
@@ -227,8 +227,8 @@ class DeferredApprovalWorkflowRuntime implements WorkflowRuntimeLike {
   constructor(private readonly backend: MemoryBackend) {}
 
   async evaluate(...args: unknown[]) {
-    const { session, envelope } = normalizeEvaluateArgs(args)
-    if (envelope.toolName !== 'Edit') {
+    const { session, toolCall } = normalizeEvaluateArgs(args)
+    if (toolCall.toolName !== 'Edit') {
       return { action: 'allow' as const, stageId: 'noop' }
     }
 

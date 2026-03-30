@@ -37,14 +37,14 @@ export interface EdictumPluginOptions extends OpenClawAdapterOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * Create an OpenClaw plugin definition that registers Edictum governance hooks.
+ * Create an OpenClaw plugin definition that registers Edictum rules hooks.
  *
  * Usage:
  * ```typescript
  * import { Edictum } from "@edictum/core";
  * import { createEdictumPlugin } from "@edictum/edictum";
  *
- * const guard = Edictum.fromYaml("contracts/openclaw-governance.yaml");
+ * const guard = Edictum.fromYaml("contracts/openclaw-rules.yaml");
  * export default createEdictumPlugin(guard);
  * ```
  *
@@ -52,7 +52,7 @@ export interface EdictumPluginOptions extends OpenClawAdapterOptions {
  * ```typescript
  * export default createEdictumPlugin(guard, {
  *   priority: 999,
- *   onDeny: (envelope, reason) => console.error(`[edictum] denied: ${reason}`),
+ *   onDeny: (toolCall, reason) => console.error(`[edictum] blocked: ${reason}`),
  * });
  * ```
  */
@@ -72,9 +72,9 @@ export function createEdictumPlugin(guard: Edictum, options: EdictumPluginOption
 
   return {
     id: 'edictum',
-    name: 'Edictum Contract Enforcement',
+    name: 'Edictum Rules Enforcement',
     description:
-      'Runtime contract enforcement for AI agent tool calls. Denies exfiltration, credential theft, destructive commands, and prompt injection.',
+      'Runtime rules enforcement for AI agent tool calls. Blocks exfiltration, credential theft, destructive commands, and prompt injection.',
     register(api: OpenClawPluginApi) {
       const adapter = new EdictumOpenClawAdapter(guard, {
         ...options,

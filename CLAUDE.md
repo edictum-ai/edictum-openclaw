@@ -1,6 +1,6 @@
 # Edictum for OpenClaw
 
-Native OpenClaw plugin + adapter for Edictum runtime contract enforcement.
+Native OpenClaw plugin + adapter for Edictum runtime rules enforcement.
 
 **npm:** `@edictum/edictum`
 **Install:** `openclaw plugins install @edictum/edictum`
@@ -8,42 +8,42 @@ Native OpenClaw plugin + adapter for Edictum runtime contract enforcement.
 ## What This Is
 
 A standalone npm package that provides:
-1. **Native OpenClaw plugin** — auto-registers `before_tool_call`/`after_tool_call` hooks with bundled 770-line governance contracts
+1. **Native OpenClaw plugin** — auto-registers `before_tool_call` and `after_tool_call` hooks with a bundled ruleset
 2. **Adapter library** — `EdictumOpenClawAdapter` and `createEdictumPlugin()` for manual wiring
 
 Two modes:
-- **Standalone** (default): Uses bundled `openclaw-governance.yaml`, zero config
-- **Console-connected**: When `serverUrl` + `apiKey` are configured, connects to Edictum Console for hot-reload, fleet monitoring, HITL approvals
+- **Standalone** (default): Uses bundled `openclaw-rules.yaml`, zero network config
+- **Console-connected**: When `serverUrl` and `apiKey` are configured, connects to Edictum Console for hot reload, fleet monitoring, and HITL approvals
 
 ## Repo Structure
 
-- `src/index.ts` — unified entry: default export (plugin) + adapter + factory
-- `src/native-plugin.ts` — native OpenClaw plugin definition (config-driven setup)
-- `src/adapter.ts` — `EdictumOpenClawAdapter` (governance pipeline bridge)
+- `src/index.ts` — unified entry: default export, adapter, factory, exported types
+- `src/native-plugin.ts` — native OpenClaw plugin definition and config-driven setup
+- `src/adapter.ts` — `EdictumOpenClawAdapter`, the OpenClaw-to-Edictum bridge
 - `src/plugin.ts` — `createEdictumPlugin()` factory
-- `src/types.ts` — OpenClaw type definitions
-- `src/helpers.ts` — findings and result helpers
-- `contracts/` — bundled governance YAML + security design docs
-- `openclaw.plugin.json` — OpenClaw plugin manifest with config schema
+- `src/types.ts` — OpenClaw-facing types and adapter return types
+- `src/helpers.ts` — violation and result helpers
+- `contracts/` — bundled rules YAML
+- `openclaw.plugin.json` — OpenClaw plugin manifest and config schema
 
 ## Dependencies
 
-- `@edictum/core` — contract engine (bundled at build time)
-- `@edictum/server` — Console connection (optional, separate install)
-- `openclaw` — peer dependency (the host runtime)
+- `@edictum/core` — rules engine and Workflow Gates runtime
+- `@edictum/server` — Console connection for approvals and persistence
+- `openclaw` — peer dependency provided by the host runtime
 
 ## Commands
 
-- `pnpm install` — install deps
-- `pnpm build` — build with tsup (dual ESM+CJS)
-- `pnpm test` — run tests (vitest)
-- `pnpm typecheck` — type check
+- `pnpm install`
+- `pnpm build`
+- `pnpm test`
+- `pnpm typecheck`
 
 ## Rules
 
 - Follow edictum ecosystem conventions
-- Security is non-negotiable — this is a security product
-- Never skip CI or use --no-verify
-- Verify all code examples against source before publishing
-- Keep the bundled contracts in sync with OpenClaw's tool catalog
-- Terminology: "contract" not "rule", "denied" not "blocked", "pipeline" not "engine"
+- Security is non-negotiable
+- Never skip CI or use `--no-verify`
+- Verify code examples against source before publishing
+- Keep the bundled rules in sync with OpenClaw's tool catalog
+- Terminology for this repo: use `rules`, `block`, and `violations` as the primary public language

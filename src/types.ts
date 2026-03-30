@@ -2,6 +2,8 @@
 // These mirror OpenClaw's plugin types so we don't need a runtime import.
 // OpenClaw remains a peerDependency for type checking only.
 
+import type { Violation as EdictumViolation } from '@edictum/core'
+
 /**
  * Event passed to the before_tool_call hook handler.
  * @see OpenClaw src/plugins/types.ts PluginHookBeforeToolCallEvent
@@ -83,7 +85,7 @@ export interface OpenClawPluginApi {
  */
 export interface EdictumNativePluginConfig {
   readonly enabled?: boolean
-  readonly contractsPath?: string
+  readonly rulesPath?: string
   readonly workflowPath?: string
   readonly mode?: 'enforce' | 'observe'
   readonly serverUrl?: string
@@ -92,21 +94,16 @@ export interface EdictumNativePluginConfig {
 }
 
 /**
- * Finding from a postcondition evaluation.
+ * Violation produced by an output check.
  */
-export interface Finding {
-  readonly contractId: string | null
-  readonly message: string
-  readonly tags: readonly string[]
-  readonly severity: string
-}
+export type Violation = EdictumViolation
 
 /**
- * Result from post-execution governance.
+ * Result from post-execution rules evaluation.
  */
 export interface PostCallResult {
   readonly result: unknown
   readonly postconditionsPassed: boolean
-  readonly findings: readonly Finding[]
+  readonly violations: readonly Violation[]
   readonly outputSuppressed: boolean
 }

@@ -4,6 +4,7 @@
 import * as EdictumCore from '@edictum/core'
 import { createEdictumPlugin } from './plugin.js'
 import { EdictumOpenClawAdapter } from './adapter.js'
+import type { FromYamlOptions } from '@edictum/core'
 import type {
   AfterToolCallEvent,
   BeforeToolCallEvent,
@@ -16,11 +17,11 @@ import { loadWorkflowRuntime } from './workflow-compat.js'
 import type { WorkflowCoreModuleLike, WorkflowRuntimeLike } from './workflow-compat.js'
 import type * as EdictumServerModule from '@edictum/server'
 
-type PluginConfig = EdictumNativePluginConfig
-type GuardInstance = InstanceType<typeof EdictumCore.Edictum>
-type GuardFromYamlCompatOptions = NonNullable<Parameters<typeof EdictumCore.Edictum.fromYaml>[1]> & {
-  workflowRuntime?: WorkflowRuntimeLike
+type PluginConfig = EdictumNativePluginConfig & {
+  readonly contractsPath?: string
 }
+type GuardInstance = InstanceType<typeof EdictumCore.Edictum>
+type GuardFromYamlOptions = FromYamlOptions
 type ServerModuleLike = typeof EdictumServerModule
 
 // Resolve __dirname for both ESM and CJS contexts
@@ -29,8 +30,8 @@ const currentDir =
     ? __dirname
     : dirname(fileURLToPath(import.meta.url))
 
-/** Default contracts: bundled governance YAML shipped with this plugin. */
-const DEFAULT_CONTRACTS = resolve(currentDir, '..', 'contracts', 'openclaw-governance.yaml')
+/** Default rules: bundled rules YAML shipped with this plugin. */
+const DEFAULT_RULES = resolve(currentDir, '..', 'contracts', 'openclaw-rules.yaml')
 
 /** Hook priority — run before most other plugins. */
 const HOOK_PRIORITY = 999
@@ -88,7 +89,7 @@ const configSchema = {
   additionalProperties: false,
   properties: {
     enabled: { type: 'boolean' },
-    contractsPath: { type: 'string' },
+    rulesPath: { type: 'string' },
     workflowPath: { type: 'string' },
     mode: { type: 'string', enum: ['enforce', 'observe'] },
     serverUrl: { type: 'string' },
@@ -151,7 +152,7 @@ async function initWorkflowAdapter(
   mode: 'enforce' | 'observe',
   log?: PluginLogger,
 ): Promise<EdictumOpenClawAdapter> {
-  const contractsPath = config.contractsPath ?? DEFAULT_CONTRACTS
+  const rulesPath = resolveRulesPath(config)
   const workflowPath = config.workflowPath
   if (!workflowPath) {
     throw new Error('workflowPath is required for workflow-enabled OpenClaw integration')
@@ -161,9 +162,9 @@ async function initWorkflowAdapter(
     EdictumCore as unknown as WorkflowCoreModuleLike,
     workflowPath,
   )
-  let guardOptions: GuardFromYamlCompatOptions = {
+  let guardOptions: GuardFromYamlOptions = {
     mode,
-    workflowRuntime,
+    workflowRuntime: workflowRuntime as FromYamlOptions['workflowRuntime'],
   }
 
   if (config.serverUrl && config.apiKey) {
@@ -209,11 +210,11 @@ async function initWorkflowAdapter(
 
   const fromYamlWithWorkflow = EdictumCore.Edictum.fromYaml as unknown as (
     path: string,
-    options?: GuardFromYamlCompatOptions,
+    options?: GuardFromYamlOptions,
   ) => GuardInstance
-  const guard = fromYamlWithWorkflow(contractsPath, guardOptions)
+  const guard = fromYamlWithWorkflow(rulesPath, guardOptions)
 
-  log?.info(`loaded workflow ${workflowPath} with contracts ${contractsPath} in ${mode} mode`)
+  log?.info(`loaded workflow ${workflowPath} with rules ${rulesPath} in ${mode} mode`)
   return new EdictumOpenClawAdapter(guard, { workflowRuntime })
 }
 
@@ -300,14 +301,23 @@ function registerLocalHooks(
   mode: 'enforce' | 'observe',
   log?: PluginLogger,
 ): GuardInstance {
-  const contractsPath = config.contractsPath ?? DEFAULT_CONTRACTS
-  const guard = EdictumCore.Edictum.fromYaml(contractsPath, { mode })
+  const rulesPath = resolveRulesPath(config)
+  const guard = EdictumCore.Edictum.fromYaml(rulesPath, { mode })
 
   const plugin = createEdictumPlugin(guard, { priority: HOOK_PRIORITY })
   plugin.register(api as Parameters<typeof plugin.register>[0])
 
-  log?.info(`loaded ${contractsPath} in ${mode} mode`)
+  log?.info(`loaded ${rulesPath} in ${mode} mode`)
   return guard
+}
+
+function resolveRulesPath(config: PluginConfig): string {
+  if (config.contractsPath) {
+    throw new Error(
+      'contractsPath was removed in v0.4.0. Rename it to rulesPath before loading the plugin.',
+    )
+  }
+  return config.rulesPath ?? DEFAULT_RULES
 }
 
 // ---------------------------------------------------------------------------
@@ -329,17 +339,17 @@ function registerPlugin(api: any) {
   if (typeof api.registerCommand === 'function') {
     api.registerCommand({
       name: 'edictum',
-      description: 'Show Edictum governance status',
+      description: 'Show Edictum rules status',
       handler: () => {
         if (!activeGuard) {
           return { text: 'Edictum guard not initialized yet.' }
         }
         const lines = [
-          `**Edictum Governance Status**`,
+          `**Edictum Rules Status**`,
           ``,
           `Mode: \`${activeGuard.mode}\``,
           `Policy version: \`${activeGuard.policyVersion ?? 'unknown'}\``,
-          `Contracts path: \`${config.contractsPath ?? DEFAULT_CONTRACTS}\``,
+          `Rules path: \`${resolveRulesPath(config)}\``,
         ]
         if (config.workflowPath) {
           lines.push(`Workflow path: \`${config.workflowPath}\``)
@@ -375,9 +385,9 @@ function registerPlugin(api: any) {
 
 const pluginDef = {
   id: 'edictum',
-  name: 'Edictum Contract Enforcement',
+  name: 'Edictum Rules Enforcement',
   description:
-    'Runtime contract enforcement for AI agent tool calls. Denies exfiltration, credential theft, destructive commands, and prompt injection.',
+    'Runtime rules enforcement for AI agent tool calls. Blocks exfiltration, credential theft, destructive commands, and prompt injection.',
   configSchema,
   register: registerPlugin,
 }

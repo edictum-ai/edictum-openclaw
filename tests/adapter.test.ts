@@ -6,6 +6,7 @@ import {
   ApprovalStatus,
   createPrincipal,
   createCompiledState,
+  createPreDecision,
   EdictumConfigError,
 } from '@edictum/core'
 import type { ApprovalBackend, Precondition, Postcondition } from '@edictum/core'
@@ -799,6 +800,91 @@ describe('EdictumOpenClawAdapter', () => {
 
       const granted = sink.events.find((e) => e.action === AuditAction.CALL_APPROVAL_GRANTED)
       expect(granted).toBeDefined()
+    })
+
+    it('denies when native workflow re-evaluation loses the stage id after approval', async () => {
+      const mockBackend: ApprovalBackend = {
+        requestApproval: vi.fn(async (_toolName, _toolArgs, _message, _opts) => ({
+          approvalId: 'mock-approval-stage-id',
+          toolName: _toolName,
+          toolArgs: Object.freeze({ ..._toolArgs }),
+          message: _message,
+          timeout: _opts?.timeout ?? 300,
+          timeoutEffect: _opts?.timeoutEffect ?? 'deny',
+          principal: _opts?.principal ?? null,
+          metadata: Object.freeze({}),
+          createdAt: new Date(),
+        })),
+        waitForDecision: vi.fn(async () => ({
+          approved: true,
+          approver: 'test-approver',
+          reason: null,
+          status: ApprovalStatus.APPROVED,
+          timestamp: new Date(),
+        })),
+      }
+
+      const guard = new Edictum({
+        auditSink: sink,
+        approvalBackend: mockBackend,
+      })
+      const adapter = new EdictumOpenClawAdapter(guard)
+      const workflowRuntime = {
+        recordApproval: vi.fn(async () => {}),
+      }
+      const preExecute = vi
+        .fn()
+        .mockResolvedValueOnce(
+          createPreDecision({
+            action: 'pending_approval',
+            reason: 'Workflow review required',
+            decisionSource: 'workflow',
+            approvalMessage: 'Workflow review required',
+            workflowStageId: 'review-gate',
+          }),
+        )
+        .mockResolvedValueOnce(
+          createPreDecision({
+            action: 'pending_approval',
+            reason: 'Workflow review required',
+            decisionSource: 'workflow',
+            approvalMessage: 'Workflow review required',
+            workflowStageId: null,
+          }),
+        )
+
+      Object.assign(adapter as unknown as Record<string, unknown>, {
+        _workflowRuntime: workflowRuntime,
+        _workflowHandledNatively: true,
+        _pipeline: { preExecute },
+      })
+
+      const result = await adapter.pre(
+        'exec',
+        { command: 'git push origin feature/spec-014 --dry-run' },
+        'tc-approval-missing-stage',
+        makeCtx({ toolCallId: 'tc-approval-missing-stage' }),
+      )
+
+      expect(result).toBe('Workflow approval persistence error: missing stageId')
+      expect(mockBackend.requestApproval).toHaveBeenCalledOnce()
+      expect(mockBackend.waitForDecision).toHaveBeenCalledWith('mock-approval-stage-id', 300)
+      expect(workflowRuntime.recordApproval).toHaveBeenCalledOnce()
+
+      const denied = sink.events.find(
+        (event) =>
+          event.callId === 'tc-approval-missing-stage' &&
+          event.action === AuditAction.CALL_DENIED,
+      )
+      expect(denied?.reason).toBe('Workflow approval persistence error: missing stageId')
+      expect(denied?.decisionSource).toBe('workflow')
+      expect(
+        sink.events.some(
+          (event) =>
+            event.callId === 'tc-approval-missing-stage' &&
+            event.action === AuditAction.CALL_EXECUTED,
+        ),
+      ).toBe(false)
     })
   })
 

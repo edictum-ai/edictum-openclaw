@@ -49,8 +49,10 @@ import { buildViolations, summarizeResult } from './helpers.js'
 const MAX_PENDING = 10_000
 
 /**
- * Match @edictum/core's approval retry guard when a workflow approval
- * advances into another approval-requiring stage before execution.
+ * Match @edictum/core's internal MAX_WORKFLOW_APPROVAL_ROUNDS guard when a
+ * workflow approval advances into another approval-requiring stage before
+ * execution. The installed core ceiling is asserted in workflow integration
+ * tests because @edictum/core does not currently export this constant.
  */
 const MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 
@@ -489,6 +491,24 @@ export class EdictumOpenClawAdapter {
               await recordWorkflowApproval(this._workflowRuntime, session, workflowStageId)
               decision = await this._pipeline.preExecute(toolCall, session)
               workflowStageId = extractWorkflowStageId(decision)
+              if (decision.action === 'pending_approval' && workflowStageId === null) {
+                const reason = 'Workflow approval persistence error: missing stageId'
+                this._safeDeny(toolCall, reason, 'workflow')
+                await this._emitAuditPre(
+                  toolCall,
+                  this._createWorkflowAuditDecision({
+                    action: 'block',
+                    reason,
+                    stageId: null,
+                    approvalMessage: null,
+                    approvalTimeout: null,
+                    approvalTimeoutEffect: null,
+                  }),
+                  AuditAction.CALL_DENIED,
+                  session,
+                )
+                return reason
+              }
               continue
             } catch {
               const reason = 'Workflow approval persistence error'

@@ -1,7 +1,7 @@
 {
   "packageManager": "pnpm@10.11.0",
   "name": "@edictum/edictum",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "OpenClaw adapter and plugin for Edictum runtime rules enforcement — one command, zero code changes",
   "license": "MIT",
   "type": "module",
@@ -56,7 +56,7 @@
   },
   "devDependencies": {
     "@edictum/core": "^0.3.0",
-    "@edictum/server": "^0.2.0",
+    "@edictum/server": "^0.3.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",

@@ -16,8 +16,8 @@ importers:
         specifier: ^0.3.0
         version: 0.3.0
       '@edictum/server':
-        specifier: ^0.2.0
-        version: 0.2.0(@edictum/core@0.3.0)
+        specifier: ^0.3.0
+        version: 0.3.0(@edictum/core@0.3.0)
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -217,8 +217,8 @@ packages:
     resolution: {integrity: sha512-O+swUTav9mMxp7sdLfOw/abDFvGYDYhq0SlgCVTQmZq8aQzxZQjdHRORGpV10HPPysFe9MtCMtw5UjD1NZMXiw==}
     engines: {node: '>=22'}
 
-  '@edictum/server@0.2.0':
-    resolution: {integrity: sha512-01xcIkYEQPN0HmMuHnWZqpiRSrZhApMguIPwwdvlYsSjZs1j7ECo6SBH6y2YgbVLkAO3vVVoFtUn66A3+88WPA==}
+  '@edictum/server@0.3.0':
+    resolution: {integrity: sha512-avAdAQ5LyLfpj9wpkfFrXYkX0SF+RZXD/V4wgchtw5mX572a3Da2Oq8LhuEgBc35tv+JxmSlIPxJOwcdPa+20w==}
     engines: {node: '>=22'}
     peerDependencies:
       '@edictum/core': ^0.3.0
@@ -3210,7 +3210,7 @@ snapshots:
     dependencies:
       js-yaml: 4.1.1
 
-  '@edictum/server@0.2.0(@edictum/core@0.3.0)':
+  '@edictum/server@0.3.0(@edictum/core@0.3.0)':
     dependencies:
       '@edictum/core': 0.3.0
 

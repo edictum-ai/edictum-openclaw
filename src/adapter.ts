@@ -72,6 +72,19 @@ const PARAM_ALIAS_MAP: ReadonlyArray<{
   { canonical: 'path', aliases: ['file_path', 'filePath', 'file'] },
 ]
 
+/**
+ * Lowercase OpenClaw tool ids -> Edictum's canonical evidence names.
+ * Workflow/runtime evidence still keys off the historical capitalized forms.
+ */
+const TOOL_NAME_ALIAS_MAP: Readonly<Record<string, string>> = {
+  read: 'Read',
+  edit: 'Edit',
+  write: 'Write',
+  exec: 'Bash',
+  grep: 'Grep',
+  glob: 'Glob',
+}
+
 /** Control character regex — reused for both sessionId and callId validation. */
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/
 
@@ -298,9 +311,10 @@ export class EdictumOpenClawAdapter {
       return 'Principal resolution failed'
     }
     const principal = principalResult.value
+    const canonicalToolName = EdictumOpenClawAdapter._canonicalizeToolName(toolName)
     let toolCall: ReturnType<typeof createEnvelope>
     try {
-      toolCall = createEnvelope(toolName, toolInput, {
+      toolCall = createEnvelope(canonicalToolName, toolInput, {
         callId,
         runId: ctx.runId ?? this._sessionId,
         callIndex: this._callIndex++,
@@ -728,6 +742,11 @@ export class EdictumOpenClawAdapter {
     return copy ?? params // no-copy fast path when no normalization needed
   }
 
+  /** Canonicalize OpenClaw tool ids before envelope/workflow correlation. */
+  static _canonicalizeToolName(toolName: string): string {
+    return TOOL_NAME_ALIAS_MAP[toolName] ?? toolName
+  }
+
   /**
    * Canonicalize top-level string values to prevent Unicode bypass attacks.
    *
@@ -801,10 +820,11 @@ export class EdictumOpenClawAdapter {
    * the after_tool_call event.
    */
   private _findPendingByToolName(toolName: string): string | null {
+    const canonicalToolName = EdictumOpenClawAdapter._canonicalizeToolName(toolName)
     let matchCount = 0
     let matchedCallId: string | null = null
     for (const [callId, pending] of this._pending) {
-      if (pending.toolCall.toolName === toolName) {
+      if (pending.toolCall.toolName === canonicalToolName) {
         matchCount++
         matchedCallId = callId
       }

@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApprovalStatus,
+  AuditAction,
   CollectingAuditSink,
   Edictum,
   MemoryBackend,
+  Session,
+  WorkflowRuntime,
   createCompiledState,
+  loadWorkflowString,
 } from '@edictum/core'
 import type { ApprovalBackend } from '@edictum/core'
-import type { Session, ToolCall } from '@edictum/core'
+import type { ToolCall } from '@edictum/core'
 
 import { createEdictumPlugin } from '../src/plugin.js'
 import type {
@@ -26,6 +30,36 @@ interface WorkflowState {
 interface ApprovalWorkflowState {
   readonly approvals: readonly string[]
 }
+
+type RegisteredHandlers = Record<
+  string,
+  { handler: (...args: unknown[]) => unknown; opts?: { priority?: number } }
+>
+
+const NATIVE_GIT_WORKFLOW = String.raw`apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: lily-openclaw-hard-enforcement
+stages:
+  - id: local-review
+    description: Review the final diff before pushing
+    tools: [Read, Grep, Bash]
+    checks:
+      - command_matches: '^git\s+(status|diff|show|log)\b'
+        message: 'Only review-safe git commands are allowed before approval'
+    approval:
+      message: 'Approve only after the final diff has been reviewed locally'
+
+  - id: commit-push
+    entry:
+      - condition: 'stage_complete("local-review")'
+    tools: [Bash]
+    checks:
+      - command_matches: '^git\s+(status|diff|add|commit|push)\b'
+        message: 'Only git status/diff/add/commit/push are allowed in commit-push'
+      - command_not_matches: '^git\s+push\b.*\bmain\b'
+        message: 'Push to a branch, not main'
+`
 
 function makeCtx(overrides: Partial<ToolHookContext> = {}): ToolHookContext {
   return {
@@ -71,11 +105,36 @@ function makeAfterEvent(overrides: Partial<AfterToolCallEvent> = {}): AfterToolC
   }
 }
 
+function makeExecEvent(
+  command: string,
+  overrides: Partial<BeforeToolCallEvent> = {},
+): BeforeToolCallEvent {
+  return {
+    toolName: 'exec',
+    params: { command },
+    runId: 'run-mimi',
+    toolCallId: 'tc-exec',
+    ...overrides,
+  }
+}
+
+function makeExecAfterEvent(
+  command: string,
+  overrides: Partial<AfterToolCallEvent> = {},
+): AfterToolCallEvent {
+  return {
+    toolName: 'exec',
+    params: { command },
+    runId: 'run-mimi',
+    toolCallId: 'tc-exec',
+    result: 'ok',
+    durationMs: 5,
+    ...overrides,
+  }
+}
+
 function capturePluginHandlers(runtime: WorkflowRuntimeLike, backend: MemoryBackend) {
-  const handlers: Record<
-    string,
-    { handler: (...args: unknown[]) => unknown; opts?: { priority?: number } }
-  > = {}
+  const handlers: RegisteredHandlers = {}
 
   const plugin = createEdictumPlugin(new Edictum({ backend, auditSink: new CollectingAuditSink() }), {
     workflowRuntime: runtime,
@@ -98,6 +157,71 @@ function capturePluginHandlers(runtime: WorkflowRuntimeLike, backend: MemoryBack
 
   plugin.register(api)
   return handlers
+}
+
+function capturePluginHandlersForGuard(
+  guard: Edictum,
+  options: { workflowRuntime?: WorkflowRuntimeLike } = {},
+): RegisteredHandlers {
+  const handlers: RegisteredHandlers = {}
+  const plugin = createEdictumPlugin(guard, options)
+
+  const api: OpenClawPluginApi = {
+    id: 'edictum',
+    name: 'Edictum',
+    config: {},
+    on: vi.fn(
+      (
+        hookName: string,
+        handler: (...args: unknown[]) => unknown,
+        opts?: { priority?: number },
+      ) => {
+        handlers[hookName] = { handler, opts }
+      },
+    ),
+  }
+
+  plugin.register(api)
+  return handlers
+}
+
+function createNativeWorkflowRuntime(): WorkflowRuntime {
+  return new WorkflowRuntime(loadWorkflowString(NATIVE_GIT_WORKFLOW))
+}
+
+function createApprovalBackend(
+  decisions: ReadonlyArray<{
+    readonly approved: boolean
+    readonly reason: string | null
+    readonly status: ApprovalStatus
+  }>,
+): ApprovalBackend {
+  let index = 0
+
+  return {
+    requestApproval: vi.fn(async (toolName, toolArgs, message, opts) => ({
+      approvalId: `workflow-approval-${index + 1}`,
+      toolName,
+      toolArgs: Object.freeze({ ...toolArgs }),
+      message,
+      timeout: opts?.timeout ?? 300,
+      timeoutEffect: opts?.timeoutEffect ?? 'deny',
+      principal: opts?.principal ?? null,
+      metadata: Object.freeze({}),
+      createdAt: new Date(),
+    })),
+    waitForDecision: vi.fn(async () => {
+      const decision = decisions[index] ?? decisions[decisions.length - 1]
+      index += 1
+      return {
+        approved: decision.approved,
+        approver: decision.approved ? 'workflow-reviewer' : 'workflow-denier',
+        reason: decision.reason,
+        status: decision.status,
+        timestamp: new Date(),
+      }
+    }),
+  }
 }
 
 function normalizeEvaluateArgs(args: unknown[]): { session: Session; toolCall: ToolCall } {
@@ -640,5 +764,172 @@ describe('workflow integration', () => {
 
     expect(approvalBackend.requestApproval).toHaveBeenCalledTimes(4)
     expect(approvalBackend.waitForDecision).toHaveBeenCalledTimes(4)
+  })
+
+  it('blocks push-before-approval before execution with a workflow gate message', async () => {
+    const sink = new CollectingAuditSink()
+    const approvalBackend = createApprovalBackend([
+      {
+        approved: false,
+        reason: null,
+        status: ApprovalStatus.DENIED,
+      },
+    ])
+    const runtime = createNativeWorkflowRuntime()
+    const guard = new Edictum({
+      backend,
+      auditSink: sink,
+      approvalBackend,
+      workflowRuntime: runtime,
+    })
+    const handlers = capturePluginHandlersForGuard(guard, { workflowRuntime: runtime })
+
+    const result = await handlers['before_tool_call'].handler(
+      makeExecEvent('git push origin HEAD --dry-run', {
+        toolCallId: 'tc-push-before-approval',
+      }),
+      makeCtx({ toolName: 'exec', toolCallId: 'tc-push-before-approval' }),
+    )
+
+    expect(result).toEqual({
+      block: true,
+      blockReason: 'Approve only after the final diff has been reviewed locally',
+    })
+    expect(approvalBackend.requestApproval).toHaveBeenCalledOnce()
+    expect(approvalBackend.waitForDecision).toHaveBeenCalledOnce()
+
+    const state = await runtime.state(new Session('sid-mimi', backend))
+    expect(state.approvals).toEqual({})
+    expect(state.evidence.stageCalls).toEqual({})
+    expect(
+      sink.events.some(
+        (event) =>
+          event.callId === 'tc-push-before-approval' && event.action === AuditAction.CALL_EXECUTED,
+      ),
+    ).toBe(false)
+    expect(
+      sink.events.some(
+        (event) =>
+          event.callId === 'tc-push-before-approval' &&
+          event.action === AuditAction.CALL_APPROVAL_REQUESTED &&
+          event.decisionSource === 'workflow',
+      ),
+    ).toBe(true)
+  })
+
+  it('still allows review-safe git commands in local-review', async () => {
+    const runtime = createNativeWorkflowRuntime()
+    const guard = new Edictum({
+      backend,
+      auditSink: new CollectingAuditSink(),
+      workflowRuntime: runtime,
+    })
+    const handlers = capturePluginHandlersForGuard(guard, { workflowRuntime: runtime })
+
+    const before = await handlers['before_tool_call'].handler(
+      makeExecEvent('git diff --stat', { toolCallId: 'tc-review-safe' }),
+      makeCtx({ toolName: 'exec', toolCallId: 'tc-review-safe' }),
+    )
+    expect(before).toBeUndefined()
+
+    await handlers['after_tool_call'].handler(
+      makeExecAfterEvent('git diff --stat', {
+        toolCallId: 'tc-review-safe',
+        result: 'diff output',
+      }),
+      makeCtx({ toolName: 'exec', toolCallId: 'tc-review-safe' }),
+    )
+
+    const state = await runtime.state(new Session('sid-mimi', backend))
+    expect(state.activeStage).toBe('local-review')
+    expect(state.evidence.stageCalls['local-review']).toContain('git diff --stat')
+  })
+
+  it('blocks push-to-main before execution after approval advances into commit-push', async () => {
+    const sink = new CollectingAuditSink()
+    const approvalBackend = createApprovalBackend([
+      {
+        approved: true,
+        reason: null,
+        status: ApprovalStatus.APPROVED,
+      },
+    ])
+    const runtime = createNativeWorkflowRuntime()
+    const guard = new Edictum({
+      backend,
+      auditSink: sink,
+      approvalBackend,
+      workflowRuntime: runtime,
+    })
+    const handlers = capturePluginHandlersForGuard(guard, { workflowRuntime: runtime })
+
+    const result = await handlers['before_tool_call'].handler(
+      makeExecEvent('git push origin main --dry-run', {
+        toolCallId: 'tc-push-main',
+      }),
+      makeCtx({ toolName: 'exec', toolCallId: 'tc-push-main' }),
+    )
+
+    expect(result).toEqual({
+      block: true,
+      blockReason: 'Push to a branch, not main',
+    })
+    expect(approvalBackend.requestApproval).toHaveBeenCalledOnce()
+    expect(approvalBackend.waitForDecision).toHaveBeenCalledOnce()
+
+    const state = await runtime.state(new Session('sid-mimi', backend))
+    expect(state.approvals['local-review']).toBe('approved')
+    expect(
+      sink.events.some(
+        (event) => event.callId === 'tc-push-main' && event.action === AuditAction.CALL_EXECUTED,
+      ),
+    ).toBe(false)
+  })
+
+  it('still allows a valid branch push in principle after approval and in commit-push', async () => {
+    const sink = new CollectingAuditSink()
+    const approvalBackend = createApprovalBackend([
+      {
+        approved: true,
+        reason: null,
+        status: ApprovalStatus.APPROVED,
+      },
+    ])
+    const runtime = createNativeWorkflowRuntime()
+    const guard = new Edictum({
+      backend,
+      auditSink: sink,
+      approvalBackend,
+      workflowRuntime: runtime,
+    })
+    const handlers = capturePluginHandlersForGuard(guard, { workflowRuntime: runtime })
+
+    const before = await handlers['before_tool_call'].handler(
+      makeExecEvent('git push origin feature/spec-014 --dry-run', {
+        toolCallId: 'tc-push-branch',
+      }),
+      makeCtx({ toolName: 'exec', toolCallId: 'tc-push-branch' }),
+    )
+    expect(before).toBeUndefined()
+
+    await handlers['after_tool_call'].handler(
+      makeExecAfterEvent('git push origin feature/spec-014 --dry-run', {
+        toolCallId: 'tc-push-branch',
+        result: 'pushed',
+      }),
+      makeCtx({ toolName: 'exec', toolCallId: 'tc-push-branch' }),
+    )
+
+    const state = await runtime.state(new Session('sid-mimi', backend))
+    expect(state.approvals['local-review']).toBe('approved')
+    expect(state.evidence.stageCalls['commit-push']).toContain(
+      'git push origin feature/spec-014 --dry-run',
+    )
+    expect(
+      sink.events.some(
+        (event) =>
+          event.callId === 'tc-push-branch' && event.action === AuditAction.CALL_EXECUTED,
+      ),
+    ).toBe(true)
   })
 })

@@ -2,7 +2,7 @@
   "id": "edictum",
   "name": "Edictum Rules Enforcement",
   "description": "Runtime rules enforcement for AI agent tool calls. Blocks exfiltration, credential theft, destructive commands, and prompt injection.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "hooks": ["before_tool_call", "after_tool_call"],
   "configSchema": {
     "type": "object",

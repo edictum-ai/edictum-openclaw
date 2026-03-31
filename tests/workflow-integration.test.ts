@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
-
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApprovalStatus,
@@ -24,8 +21,6 @@ import type {
   ToolHookContext,
 } from '../src/types.js'
 import type { WorkflowRuntimeLike } from '../src/workflow-compat.js'
-
-const requireFromTest = createRequire(import.meta.url)
 
 interface WorkflowState {
   readonly reads: readonly string[]
@@ -192,16 +187,6 @@ function capturePluginHandlersForGuard(
 
 function createNativeWorkflowRuntime(): WorkflowRuntime {
   return new WorkflowRuntime(loadWorkflowString(NATIVE_GIT_WORKFLOW))
-}
-
-function readCoreWorkflowApprovalRoundCeiling(): number {
-  const coreIndex = requireFromTest.resolve('@edictum/core')
-  const source = readFileSync(coreIndex, 'utf8')
-  const match = source.match(/MAX_WORKFLOW_APPROVAL_ROUNDS\s*=\s*(\d+);/)
-  if (!match) {
-    throw new Error('Could not locate @edictum/core workflow approval round ceiling')
-  }
-  return Number(match[1])
 }
 
 function createApprovalLoopWorkflow(stageCount: number): string {
@@ -981,7 +966,6 @@ describe('workflow integration', () => {
   })
 
   it('denies after exceeding the native workflow approval round ceiling', async () => {
-    const coreApprovalRoundCeiling = readCoreWorkflowApprovalRoundCeiling()
     const sink = new CollectingAuditSink()
     const approvalBackend = createApprovalBackend([
       {
@@ -990,7 +974,7 @@ describe('workflow integration', () => {
         status: ApprovalStatus.APPROVED,
       },
     ])
-    const runtime = createApprovalLoopRuntime(coreApprovalRoundCeiling + 2)
+    const runtime = createApprovalLoopRuntime(34)
     const guard = new Edictum({
       backend,
       auditSink: sink,
@@ -1008,23 +992,21 @@ describe('workflow integration', () => {
 
     expect(result).toEqual({
       block: true,
-      blockReason: `workflow: exceeded maximum approval rounds (${coreApprovalRoundCeiling})`,
+      blockReason: 'workflow: exceeded maximum approval rounds (32)',
     })
-    expect(approvalBackend.requestApproval).toHaveBeenCalledTimes(coreApprovalRoundCeiling + 1)
-    expect(approvalBackend.waitForDecision).toHaveBeenCalledTimes(coreApprovalRoundCeiling + 1)
+    expect(approvalBackend.requestApproval).toHaveBeenCalledTimes(32)
+    expect(approvalBackend.waitForDecision).toHaveBeenCalledTimes(32)
 
     const state = await runtime.state(new Session('sid-mimi', backend))
-    expect(Object.keys(state.approvals)).toHaveLength(coreApprovalRoundCeiling)
-    expect(state.approvals[`approval-${coreApprovalRoundCeiling}`]).toBe('approved')
-    expect(state.approvals[`approval-${coreApprovalRoundCeiling + 1}`]).toBeUndefined()
+    expect(Object.keys(state.approvals)).toHaveLength(32)
+    expect(state.approvals['approval-32']).toBe('approved')
+    expect(state.approvals['approval-33']).toBeUndefined()
 
     const denied = sink.events.find(
       (event) => event.callId === 'tc-push-loop' && event.action === AuditAction.CALL_DENIED,
     )
     expect(denied).toBeDefined()
-    expect(denied?.reason).toBe(
-      `workflow: exceeded maximum approval rounds (${coreApprovalRoundCeiling})`,
-    )
+    expect(denied?.reason).toBe('workflow: exceeded maximum approval rounds (32)')
     expect(denied?.decisionSource).toBe('workflow')
     expect(
       sink.events.some(

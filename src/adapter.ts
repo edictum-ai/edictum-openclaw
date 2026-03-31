@@ -51,8 +51,9 @@ const MAX_PENDING = 10_000
 /**
  * Match @edictum/core's internal MAX_WORKFLOW_APPROVAL_ROUNDS guard when a
  * workflow approval advances into another approval-requiring stage before
- * execution. The installed core ceiling is asserted in workflow integration
- * tests because @edictum/core does not currently export this constant.
+ * execution.
+ *
+ * SYNC: @edictum/core internal MAX_WORKFLOW_APPROVAL_ROUNDS.
  */
 const MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 
@@ -416,6 +417,52 @@ export class EdictumOpenClawAdapter {
     while (decision.action === 'pending_approval') {
       // Matches vercel-ai/claude-sdk pattern — _approvalBackend is internal but stable
       const approvalBackend = this._guard._approvalBackend
+      const workflowRuntime = this._workflowRuntime
+      const nativeWorkflowPendingApproval =
+        workflowRuntime !== null &&
+        this._workflowHandledNatively &&
+        decision.decisionSource === 'workflow'
+      const nativeWorkflowStageId = nativeWorkflowPendingApproval ? workflowStageId : null
+
+      if (nativeWorkflowPendingApproval) {
+        if (nativeWorkflowStageId === null) {
+          const reason = 'Workflow approval persistence error: missing stageId'
+          this._safeDeny(toolCall, reason, 'workflow')
+          await this._emitAuditPre(
+            toolCall,
+            this._createWorkflowAuditDecision({
+              action: 'block',
+              reason,
+              stageId: null,
+              approvalMessage: null,
+              approvalTimeout: null,
+              approvalTimeoutEffect: null,
+            }),
+            AuditAction.CALL_DENIED,
+            session,
+          )
+          return reason
+        }
+
+        if (workflowApprovalRounds >= MAX_WORKFLOW_APPROVAL_ROUNDS) {
+          const reason = `workflow: exceeded maximum approval rounds (${MAX_WORKFLOW_APPROVAL_ROUNDS})`
+          this._safeDeny(toolCall, reason, 'workflow')
+          await this._emitAuditPre(
+            toolCall,
+            this._createWorkflowAuditDecision({
+              action: 'block',
+              reason,
+              stageId: nativeWorkflowStageId,
+              approvalMessage: null,
+              approvalTimeout: null,
+              approvalTimeoutEffect: null,
+            }),
+            AuditAction.CALL_DENIED,
+            session,
+          )
+          return reason
+        }
+      }
 
       if (!approvalBackend) {
         const reason = decision.reason ?? 'Approval required but no approval backend configured.'
@@ -461,54 +508,12 @@ export class EdictumOpenClawAdapter {
         }
 
         if (approved) {
-          if (
-            this._workflowRuntime &&
-            this._workflowHandledNatively &&
-            decision.decisionSource === 'workflow' &&
-            workflowStageId !== null
-          ) {
-            if (workflowApprovalRounds >= MAX_WORKFLOW_APPROVAL_ROUNDS) {
-              const reason = `workflow: exceeded maximum approval rounds (${MAX_WORKFLOW_APPROVAL_ROUNDS})`
-              this._safeDeny(toolCall, reason, 'workflow')
-              await this._emitAuditPre(
-                toolCall,
-                this._createWorkflowAuditDecision({
-                  action: 'block',
-                  reason,
-                  stageId: workflowStageId,
-                  approvalMessage: null,
-                  approvalTimeout: null,
-                  approvalTimeoutEffect: null,
-                }),
-                AuditAction.CALL_DENIED,
-                session,
-              )
-              return reason
-            }
-
+          if (nativeWorkflowPendingApproval && workflowRuntime && nativeWorkflowStageId !== null) {
             workflowApprovalRounds += 1
             try {
-              await recordWorkflowApproval(this._workflowRuntime, session, workflowStageId)
+              await recordWorkflowApproval(workflowRuntime, session, nativeWorkflowStageId)
               decision = await this._pipeline.preExecute(toolCall, session)
               workflowStageId = extractWorkflowStageId(decision)
-              if (decision.action === 'pending_approval' && workflowStageId === null) {
-                const reason = 'Workflow approval persistence error: missing stageId'
-                this._safeDeny(toolCall, reason, 'workflow')
-                await this._emitAuditPre(
-                  toolCall,
-                  this._createWorkflowAuditDecision({
-                    action: 'block',
-                    reason,
-                    stageId: null,
-                    approvalMessage: null,
-                    approvalTimeout: null,
-                    approvalTimeoutEffect: null,
-                  }),
-                  AuditAction.CALL_DENIED,
-                  session,
-                )
-                return reason
-              }
               continue
             } catch {
               const reason = 'Workflow approval persistence error'

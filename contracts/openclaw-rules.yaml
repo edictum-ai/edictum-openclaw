@@ -28,16 +28,16 @@ observability:
   file: /var/log/edictum/openclaw-audit.jsonl
 
 tools:
-  read:
+  Read:
     side_effect: read
     idempotent: true
-  write:
+  Write:
     side_effect: irreversible
-  edit:
+  Edit:
     side_effect: irreversible
   apply_patch:
     side_effect: irreversible
-  exec:
+  Bash:
     side_effect: irreversible
   process:
     side_effect: irreversible
@@ -86,7 +86,7 @@ rules:
     tool: '*'
     when:
       all:
-        - tool.name: { in: [write, edit, apply_patch, process] }
+        - tool.name: { in: [Write, Edit, apply_patch, process] }
         # Scoped to actual rules file paths — bare "edictum" is too broad
         # (blocks projects that integrate/document Edictum, e.g., src/edictum-config.ts)
         - any:
@@ -109,7 +109,7 @@ rules:
   # directory are the primary protection; these rules are a secondary guard.
   - id: tamper-protect-governance-files-exec
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         # Shell-redirect writes to rules files (scoped to actual rules paths)
@@ -136,7 +136,7 @@ rules:
 
   - id: tamper-protect-exec
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         # Uninstall rules enforcement
@@ -165,7 +165,7 @@ rules:
     tool: '*'
     when:
       all:
-        - tool.name: { in: [write, edit, apply_patch] }
+        - tool.name: { in: [Write, Edit, apply_patch] }
         - any:
             # SSH authorized keys — persistent backdoor
             - args.path: { contains: '.ssh/authorized_keys' }
@@ -190,7 +190,7 @@ rules:
 
   - id: protect-sensitive-file-writes-exec
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         # Shell redirect writes to SSH authorized_keys
@@ -213,7 +213,7 @@ rules:
     tool: '*'
     when:
       all:
-        - tool.name: { in: [write, edit, apply_patch] }
+        - tool.name: { in: [Write, Edit, apply_patch] }
         - any:
             - args.path: { contains: '.openclaw/openclaw.json' }
             - args.path: { contains: '.openclaw/HEARTBEAT.md' }
@@ -232,7 +232,7 @@ rules:
 
   - id: protect-credential-store
     type: pre
-    tool: read
+    tool: Read
     when:
       any:
         - args.path: { contains: '.openclaw/credentials' }
@@ -245,7 +245,7 @@ rules:
 
   - id: protect-credential-store-exec
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         - args.command:
@@ -274,7 +274,7 @@ rules:
 
   - id: protect-ssh-keys
     type: pre
-    tool: read
+    tool: Read
     when:
       any:
         - args.path: { contains: '.ssh/id_' }
@@ -290,7 +290,7 @@ rules:
 
   - id: protect-ssh-keys-exec
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         - args.command:
@@ -314,7 +314,7 @@ rules:
 
   - id: protect-browser-data
     type: pre
-    tool: read
+    tool: Read
     when:
       any:
         # Chromium-based browsers (Chrome, Brave, Edge, Vivaldi, Arc)
@@ -348,7 +348,7 @@ rules:
 
   - id: protect-crypto-wallets
     type: pre
-    tool: read
+    tool: Read
     when:
       any:
         # Solana
@@ -378,7 +378,7 @@ rules:
 
   - id: protect-browser-wallet-exec
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         # Reading browser data via shell
@@ -413,7 +413,7 @@ rules:
   # and blocks conda env, venv, NODE_ENV=, etc.
   - id: block-env-dump-commands
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         # Full env dump — at command start or in subshell (bash -c 'env', sh -c 'printenv')
@@ -440,7 +440,7 @@ rules:
 
   - id: protect-auth-profiles-file
     type: pre
-    tool: read
+    tool: Read
     when:
       any:
         - args.path: { contains: 'auth-profiles.json' }
@@ -560,7 +560,7 @@ rules:
 
   - id: block-elevated-exec
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         - args.elevated: { equals: true }
@@ -583,7 +583,7 @@ rules:
 
   - id: block-remote-code-exec
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         # Pipe to shell interpreter (catches curl|bash, echo|bash, base64|bash, etc.)
@@ -613,7 +613,7 @@ rules:
 
   - id: block-reverse-shells
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         - args.command: { matches: '/dev/tcp/' }
@@ -667,7 +667,7 @@ rules:
 
   - id: block-exfil-via-curl
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         # Sending credential-shaped data via curl/wget
@@ -716,7 +716,7 @@ rules:
 
   - id: block-host-destruction
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         # Recursive delete of root, home, cwd, or variable paths
@@ -752,7 +752,7 @@ rules:
   # setuid remain hard-denied — these are genuinely dangerous.
   - id: approve-privilege-escalation
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         - args.command: { matches: '\bsudo\b' }
@@ -764,7 +764,7 @@ rules:
 
   - id: block-dangerous-chmod
     type: pre
-    tool: exec
+    tool: Bash
     when:
       any:
         - args.command: { matches: '\bchmod\s+[0-7]*777\b' }
@@ -790,7 +790,7 @@ rules:
 
   - id: gate-package-install-scripts
     type: pre
-    tool: exec
+    tool: Bash
     when:
       all:
         - args.command: { matches: '\b(npm|pnpm|yarn|bun)\s+(install|add|ci|i)\b' }
@@ -947,7 +947,7 @@ rules:
 
   - id: detect-dynamic-exec-in-written-code-write
     type: post
-    tool: write
+    tool: Write
     when:
       output.text:
         matches_any:
@@ -967,7 +967,7 @@ rules:
 
   - id: detect-dynamic-exec-in-written-code-edit
     type: post
-    tool: edit
+    tool: Edit
     when:
       output.text:
         matches_any:

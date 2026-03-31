@@ -59,7 +59,7 @@ function makeAfterEvent(overrides: Partial<AfterToolCallEvent> = {}): AfterToolC
 }
 
 const noRm: Precondition = {
-  tool: 'exec',
+  tool: 'Bash',
   check: async (envelope) => {
     const cmd = envelope.args.command
     if (typeof cmd === 'string' && cmd.includes('rm -rf')) {
@@ -123,7 +123,7 @@ describe('EdictumOpenClawAdapter', () => {
       expect(sink.events.length).toBeGreaterThanOrEqual(1)
       const denied = sink.events.find((e) => e.action === AuditAction.CALL_DENIED)
       expect(denied).toBeDefined()
-      expect(denied!.toolName).toBe('exec')
+      expect(denied!.toolName).toBe('Bash')
     })
 
     it('emits CALL_ALLOWED audit event on allow', async () => {
@@ -362,7 +362,7 @@ describe('EdictumOpenClawAdapter', () => {
       // Verify via audit event — envelope was created with metadata
       const event = sink.events[0]
       expect(event).toBeDefined()
-      expect(event.toolName).toBe('exec')
+      expect(event.toolName).toBe('Bash')
       expect(event.callId).toBe('tc-meta')
       // Metadata (openclawAgentId, etc.) is on the envelope, not the audit event.
       // The envelope is internal to the adapter; we verify it was created correctly
@@ -761,14 +761,14 @@ describe('EdictumOpenClawAdapter', () => {
       })
 
       // Inject an InternalPrecondition with effect: "approve" so the pipeline
-      // returns pending_approval for tool "exec".
+      // returns pending_approval for tool "Bash".
       guard._replaceState(
         createCompiledState({
           preconditions: [
             {
               type: 'precondition',
               name: 'require-approval',
-              tool: 'exec',
+              tool: 'Bash',
               effect: 'approve',
               check: () => ({
                 passed: false,
@@ -795,7 +795,7 @@ describe('EdictumOpenClawAdapter', () => {
       // Verify audit trail: CALL_APPROVAL_REQUESTED then CALL_APPROVAL_GRANTED
       const requested = sink.events.find((e) => e.action === AuditAction.CALL_APPROVAL_REQUESTED)
       expect(requested).toBeDefined()
-      expect(requested!.toolName).toBe('exec')
+      expect(requested!.toolName).toBe('Bash')
 
       const granted = sink.events.find((e) => e.action === AuditAction.CALL_APPROVAL_GRANTED)
       expect(granted).toBeDefined()
@@ -829,7 +829,7 @@ describe('EdictumOpenClawAdapter', () => {
       // The fallback should have resolved the pending entry and emitted CALL_EXECUTED
       const executed = sink.events.find((e) => e.action === AuditAction.CALL_EXECUTED)
       expect(executed).toBeDefined()
-      expect(executed!.toolName).toBe('exec')
+      expect(executed!.toolName).toBe('Bash')
     })
 
     it('silently returns when no pending entry matches toolName', async () => {
@@ -1168,7 +1168,7 @@ describe('EdictumOpenClawAdapter', () => {
       // defaultSuccessCheck should detect "error:" prefix → CALL_FAILED
       const failed = sink.events.find((e) => e.action === AuditAction.CALL_FAILED)
       expect(failed).toBeDefined()
-      expect(failed!.toolName).toBe('exec')
+      expect(failed!.toolName).toBe('Bash')
     })
 
     it('tool result with is_error:true is classified as failure', async () => {
@@ -1300,6 +1300,25 @@ describe('EdictumOpenClawAdapter', () => {
     it('returns params unchanged when no aliases present', () => {
       const params = { command: 'ls', content: 'x' }
       expect(normalize(params)).toBe(params) // same reference
+    })
+  })
+
+  describe('_canonicalizeToolName', () => {
+    const canonicalize = EdictumOpenClawAdapter._canonicalizeToolName
+
+    it.each([
+      ['read', 'Read'],
+      ['edit', 'Edit'],
+      ['write', 'Write'],
+      ['exec', 'Bash'],
+      ['grep', 'Grep'],
+      ['glob', 'Glob'],
+    ])('maps %s to %s', (toolName, canonical) => {
+      expect(canonicalize(toolName)).toBe(canonical)
+    })
+
+    it('passes through tool ids without aliases', () => {
+      expect(canonicalize('sessions_list')).toBe('sessions_list')
     })
   })
 

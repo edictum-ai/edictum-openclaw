@@ -189,6 +189,38 @@ function createNativeWorkflowRuntime(): WorkflowRuntime {
   return new WorkflowRuntime(loadWorkflowString(NATIVE_GIT_WORKFLOW))
 }
 
+function createApprovalLoopWorkflow(stageCount: number): string {
+  const stages = Array.from({ length: stageCount }, (_value, index) => {
+    const stageId = `approval-${index + 1}`
+    const lines = [`  - id: ${stageId}`]
+
+    if (index > 0) {
+      lines.push('    entry:')
+      lines.push(`      - condition: 'stage_complete("approval-${index}")'`)
+    }
+
+    lines.push('    tools: [Bash]')
+    lines.push('    checks:')
+    lines.push(`      - command_matches: '^git\\s+status\\b'`)
+    lines.push(`        message: 'Only git status is allowed in ${stageId}'`)
+    lines.push('    approval:')
+    lines.push(`      message: 'Approve ${stageId}'`)
+    return lines.join('\n')
+  }).join('\n')
+
+  return `apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: approval-loop
+stages:
+${stages}
+`
+}
+
+function createApprovalLoopRuntime(stageCount: number): WorkflowRuntime {
+  return new WorkflowRuntime(loadWorkflowString(createApprovalLoopWorkflow(stageCount)))
+}
+
 function createApprovalBackend(
   decisions: ReadonlyArray<{
     readonly approved: boolean
@@ -931,5 +963,55 @@ describe('workflow integration', () => {
           event.callId === 'tc-push-branch' && event.action === AuditAction.CALL_EXECUTED,
       ),
     ).toBe(true)
+  })
+
+  it('denies after exceeding the native workflow approval round ceiling', async () => {
+    const sink = new CollectingAuditSink()
+    const approvalBackend = createApprovalBackend([
+      {
+        approved: true,
+        reason: null,
+        status: ApprovalStatus.APPROVED,
+      },
+    ])
+    const runtime = createApprovalLoopRuntime(34)
+    const guard = new Edictum({
+      backend,
+      auditSink: sink,
+      approvalBackend,
+      workflowRuntime: runtime,
+    })
+    const handlers = capturePluginHandlersForGuard(guard, { workflowRuntime: runtime })
+
+    const result = await handlers['before_tool_call'].handler(
+      makeExecEvent('git push origin feature/spec-014 --dry-run', {
+        toolCallId: 'tc-push-loop',
+      }),
+      makeCtx({ toolName: 'exec', toolCallId: 'tc-push-loop' }),
+    )
+
+    expect(result).toEqual({
+      block: true,
+      blockReason: 'workflow: exceeded maximum approval rounds (32)',
+    })
+    expect(approvalBackend.requestApproval).toHaveBeenCalledTimes(33)
+    expect(approvalBackend.waitForDecision).toHaveBeenCalledTimes(33)
+
+    const state = await runtime.state(new Session('sid-mimi', backend))
+    expect(Object.keys(state.approvals)).toHaveLength(32)
+    expect(state.approvals['approval-32']).toBe('approved')
+    expect(state.approvals['approval-33']).toBeUndefined()
+
+    const denied = sink.events.find(
+      (event) => event.callId === 'tc-push-loop' && event.action === AuditAction.CALL_DENIED,
+    )
+    expect(denied).toBeDefined()
+    expect(denied?.reason).toBe('workflow: exceeded maximum approval rounds (32)')
+    expect(denied?.decisionSource).toBe('workflow')
+    expect(
+      sink.events.some(
+        (event) => event.callId === 'tc-push-loop' && event.action === AuditAction.CALL_EXECUTED,
+      ),
+    ).toBe(false)
   })
 })

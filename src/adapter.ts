@@ -54,7 +54,7 @@ const MAX_PENDING = 10_000
  * execution.
  *
  * SYNC: @edictum/core internal MAX_WORKFLOW_APPROVAL_ROUNDS.
- * Last verified against @edictum/core@0.3.x.
+ * Last verified against @edictum/core@0.3.0.
  */
 const MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 

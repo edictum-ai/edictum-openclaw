@@ -1,7 +1,7 @@
 // @edictum/edictum — OpenClaw adapter + plugin for Edictum rules enforcement
 // Single package: use as an OpenClaw plugin (default export) or wire manually.
 
-export const VERSION = '0.4.0' as const
+export const VERSION = '0.5.0' as const
 
 // Native OpenClaw plugin (default export for `openclaw plugins install`)
 export { default } from './native-plugin.js'

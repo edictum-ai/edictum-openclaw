@@ -8,6 +8,7 @@ import {
   Session,
   WorkflowRuntime,
   createCompiledState,
+  createEnvelope,
   loadWorkflowString,
 } from '@edictum/core'
 import type { ApprovalBackend } from '@edictum/core'
@@ -199,10 +200,6 @@ function createApprovalLoopWorkflow(stageCount: number): string {
       lines.push(`      - condition: 'stage_complete("approval-${index}")'`)
     }
 
-    lines.push('    tools: [Bash]')
-    lines.push('    checks:')
-    lines.push(`      - command_matches: '^git\\s+status\\b'`)
-    lines.push(`        message: 'Only git status is allowed in ${stageId}'`)
     lines.push('    approval:')
     lines.push(`      message: 'Approve ${stageId}'`)
     return lines.join('\n')
@@ -798,7 +795,7 @@ describe('workflow integration', () => {
     expect(approvalBackend.waitForDecision).toHaveBeenCalledTimes(4)
   })
 
-  it('blocks push-before-approval before execution with a workflow gate message', async () => {
+  it('blocks push-before-approval before execution with the review-stage check', async () => {
     const sink = new CollectingAuditSink()
     const approvalBackend = createApprovalBackend([
       {
@@ -825,10 +822,10 @@ describe('workflow integration', () => {
 
     expect(result).toEqual({
       block: true,
-      blockReason: 'Approve only after the final diff has been reviewed locally',
+      blockReason: 'Only review-safe git commands are allowed before approval',
     })
-    expect(approvalBackend.requestApproval).toHaveBeenCalledOnce()
-    expect(approvalBackend.waitForDecision).toHaveBeenCalledOnce()
+    expect(approvalBackend.requestApproval).not.toHaveBeenCalled()
+    expect(approvalBackend.waitForDecision).not.toHaveBeenCalled()
 
     const state = await runtime.state(new Session('sid-mimi', backend))
     expect(state.approvals).toEqual({})
@@ -842,9 +839,7 @@ describe('workflow integration', () => {
     expect(
       sink.events.some(
         (event) =>
-          event.callId === 'tc-push-before-approval' &&
-          event.action === AuditAction.CALL_APPROVAL_REQUESTED &&
-          event.decisionSource === 'workflow',
+          event.callId === 'tc-push-before-approval' && event.action === AuditAction.CALL_DENIED,
       ),
     ).toBe(true)
   })
@@ -895,6 +890,13 @@ describe('workflow integration', () => {
     })
     const handlers = capturePluginHandlersForGuard(guard, { workflowRuntime: runtime })
 
+    await runtime.recordResult(
+      new Session('sid-mimi', backend),
+      'local-review',
+      createEnvelope('Bash', { command: 'git diff --stat' }),
+    )
+    await runtime.recordApproval(new Session('sid-mimi', backend), 'local-review')
+
     const result = await handlers['before_tool_call'].handler(
       makeExecEvent('git push origin main --dry-run', {
         toolCallId: 'tc-push-main',
@@ -906,8 +908,8 @@ describe('workflow integration', () => {
       block: true,
       blockReason: 'Push to a branch, not main',
     })
-    expect(approvalBackend.requestApproval).toHaveBeenCalledOnce()
-    expect(approvalBackend.waitForDecision).toHaveBeenCalledOnce()
+    expect(approvalBackend.requestApproval).not.toHaveBeenCalled()
+    expect(approvalBackend.waitForDecision).not.toHaveBeenCalled()
 
     const state = await runtime.state(new Session('sid-mimi', backend))
     expect(state.approvals['local-review']).toBe('approved')
@@ -935,6 +937,13 @@ describe('workflow integration', () => {
       workflowRuntime: runtime,
     })
     const handlers = capturePluginHandlersForGuard(guard, { workflowRuntime: runtime })
+
+    await runtime.recordResult(
+      new Session('sid-mimi', backend),
+      'local-review',
+      createEnvelope('Bash', { command: 'git diff --stat' }),
+    )
+    await runtime.recordApproval(new Session('sid-mimi', backend), 'local-review')
 
     const before = await handlers['before_tool_call'].handler(
       makeExecEvent('git push origin feature/spec-014 --dry-run', {

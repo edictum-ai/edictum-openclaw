@@ -13,11 +13,11 @@ importers:
         version: 2026.3.24(@napi-rs/canvas@0.1.97)
     devDependencies:
       '@edictum/core':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.3.1
+        version: 0.3.1
       '@edictum/server':
         specifier: ^0.3.1
-        version: 0.3.1(@edictum/core@0.3.0)
+        version: 0.3.1(@edictum/core@0.3.1)
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -213,8 +213,8 @@ packages:
   '@clack/prompts@1.1.0':
     resolution: {integrity: sha512-pkqbPGtohJAvm4Dphs2M8xE29ggupihHdy1x84HNojZuMtFsHiUlRvqD24tM2+XmI+61LlfNceM3Wr7U5QES5g==}
 
-  '@edictum/core@0.3.0':
-    resolution: {integrity: sha512-O+swUTav9mMxp7sdLfOw/abDFvGYDYhq0SlgCVTQmZq8aQzxZQjdHRORGpV10HPPysFe9MtCMtw5UjD1NZMXiw==}
+  '@edictum/core@0.3.1':
+    resolution: {integrity: sha512-l34tqB3dgD5SJIQJmMpSAZfL6M4TF3XW0N7C2n3N4s+SIRf4ADgBkTUtK7MqRHploT9GBBFvhKgpUivzpcVr8A==}
     engines: {node: '>=22'}
 
   '@edictum/server@0.3.1':
@@ -3206,13 +3206,13 @@ snapshots:
       '@clack/core': 1.1.0
       sisteransi: 1.0.5
 
-  '@edictum/core@0.3.0':
+  '@edictum/core@0.3.1':
     dependencies:
       js-yaml: 4.1.1
 
-  '@edictum/server@0.3.1(@edictum/core@0.3.0)':
+  '@edictum/server@0.3.1(@edictum/core@0.3.1)':
     dependencies:
-      '@edictum/core': 0.3.0
+      '@edictum/core': 0.3.1
 
   '@emnapi/runtime@1.9.1':
     dependencies:

@@ -126,7 +126,7 @@ async function initServerAdapter(
   log?: PluginLogger,
 ): Promise<EdictumOpenClawAdapter> {
   const serverModule = await loadServerModule(
-    'Edictum Console mode requires @edictum/server. Install it with: npm install @edictum/server',
+    'Edictum Control Plane mode requires @edictum/server. Install it with: npm install @edictum/server',
     log,
   )
 
@@ -143,7 +143,7 @@ async function initServerAdapter(
     mode,
   })
 
-  log?.info(`connected to Console at ${config.serverUrl}`)
+  log?.info(`connected to Control Plane at ${config.serverUrl}`)
   return new EdictumOpenClawAdapter(guard)
 }
 
@@ -169,7 +169,7 @@ async function initWorkflowAdapter(
 
   if (config.serverUrl && config.apiKey) {
     const serverModule = await loadServerModule(
-      'Edictum Console-backed workflow persistence requires @edictum/server. Install it with: npm install @edictum/server',
+      'Edictum Control Plane-backed workflow persistence requires @edictum/server. Install it with: npm install @edictum/server',
       log,
     )
     const {

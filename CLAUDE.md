@@ -13,7 +13,7 @@ A standalone npm package that provides:
 
 Two modes:
 - **Standalone** (default): Uses bundled `openclaw-rules.yaml`, zero network config
-- **Console-connected**: When `serverUrl` and `apiKey` are configured, connects to Edictum Console for hot reload, fleet monitoring, and HITL approvals
+- **Control Plane-connected**: When `serverUrl` and `apiKey` are configured, connects to the Edictum Control Plane for hot reload, fleet monitoring, and HITL approvals
 
 ## Repo Structure
 
@@ -29,7 +29,7 @@ Two modes:
 ## Dependencies
 
 - `@edictum/core` — rules engine and Workflow Gates runtime
-- `@edictum/server` — Console connection for approvals and persistence
+- `@edictum/server` — Control Plane connection for approvals and persistence
 - `openclaw` — peer dependency provided by the host runtime
 
 ## Commands

@@ -46,18 +46,18 @@
       "help": "\"enforce\" blocks violations; \"observe\" logs them without blocking"
     },
     "serverUrl": {
-      "label": "Console Server URL",
-      "help": "Edictum Console URL for HITL approvals and audit feeds (optional)",
+      "label": "Control Plane Server URL",
+      "help": "Edictum Control Plane URL for HITL approvals and audit feeds (optional)",
       "sensitive": false
     },
     "apiKey": {
-      "label": "Console API Key",
-      "help": "API key for connecting to Edictum Console (optional)",
+      "label": "Control Plane API Key",
+      "help": "API key for connecting to Edictum Control Plane (optional)",
       "sensitive": true
     },
     "agentId": {
       "label": "Agent ID",
-      "help": "Stable agent identifier for Console fleet monitoring (optional)"
+      "help": "Stable agent identifier for Control Plane fleet monitoring (optional)"
     }
   }
 }

@@ -94,8 +94,6 @@ rules:
             - args.path: { contains: '.openclaw/rules/' }
             - args.path: { contains: 'openclaw-rules.yaml' }
             - args.path: { contains: 'openclaw-rules.yml' }
-            - args.path: { contains: 'openclaw-governance.yaml' }
-            - args.path: { contains: 'openclaw-governance.yml' }
             - args.path: { contains: 'contracts/TAMPER' }
     then:
       action: block

@@ -67,7 +67,7 @@ The package ships with `contracts/openclaw-rules.yaml`, a curated ruleset that c
 
 ## Breaking Changes in v0.4.0
 
-- Bundled YAML renamed from `openclaw-governance.yaml` to `openclaw-rules.yaml`.
+- Bundled YAML is now `openclaw-rules.yaml`.
 - Plugin config renamed from `contractsPath` to `rulesPath`.
 - The plugin rejects `contractsPath` at startup instead of silently falling back to the bundled rules.
 - The adapter now returns `violations` instead of `findings` from `post()`.
@@ -97,9 +97,9 @@ Configure the plugin under `plugins.entries.edictum`:
 | `mode` | `"enforce"` \| `"observe"` | `"enforce"` | `enforce` blocks violations; `observe` logs them without blocking |
 | `rulesPath` | string | bundled YAML | Path to a custom ruleset |
 | `workflowPath` | string | — | Path to a Workflow Gates YAML definition enforced alongside the ruleset |
-| `serverUrl` | string | — | Edictum Console URL for approvals and audit feeds |
-| `apiKey` | string | — | API key for Console connection |
-| `agentId` | string | — | Stable agent identifier for Console-backed runs |
+| `serverUrl` | string | — | Edictum Control Plane URL for approvals and audit feeds |
+| `apiKey` | string | — | API key for Control Plane connection |
+| `agentId` | string | — | Stable agent identifier for Control Plane-backed runs |
 
 ## Workflow Gates
 
@@ -112,7 +112,7 @@ Workflow Gates continue to work with the renamed rules surface.
       "edictum": {
         "rulesPath": "/path/to/custom-rules.yaml",
         "workflowPath": "/path/to/workflow.yaml",
-        "serverUrl": "https://console.example.com",
+        "serverUrl": "https://control-plane.example.com",
         "apiKey": "edk_production_...",
         "agentId": "mimi"
       }
@@ -121,11 +121,11 @@ Workflow Gates continue to work with the renamed rules surface.
 }
 ```
 
-`workflowPath` uses the OpenClaw session identity for workflow state. Real workflow runs still require Console-backed persistence through `serverUrl` and `apiKey`. Memory-backed workflow state remains test-only.
+`workflowPath` uses the OpenClaw session identity for workflow state. Real workflow runs still require Control Plane-backed persistence through `serverUrl` and `apiKey`. Memory-backed workflow state remains test-only.
 
-## Console Mode
+## Control Plane Mode
 
-For hot reload, fleet monitoring, and HITL approvals, connect the plugin to [Edictum Console](https://github.com/edictum-ai/edictum-console).
+For hot reload, fleet monitoring, and HITL approvals, connect the plugin to the Edictum Control Plane.
 
 Install `@edictum/server` in the OpenClaw extensions directory:
 
